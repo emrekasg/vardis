@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy - Vardis</title>
+  <meta name="description" content="Vardis is free forever and collects nothing. What it reads, what it stores on your Mac, and the only two times it goes online.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1116" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://vardis.app/privacy">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Vardis">
+  <meta property="og:title" content="Vardis privacy: it collects nothing">
+  <meta property="og:description" content="What Vardis reads, what it stores on your Mac, and the only two times it goes online.">
+  <meta property="og:url" content="https://vardis.app/privacy">
+  <meta property="og:image" content="https://vardis.app/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Vardis home">
+        <img src="/assets/icon-256.png" alt="" width="28" height="28">
+        Vardis
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a class="hide-small" href="https://github.com/emrekasg/vardis">GitHub</a>
+        <a class="button button-small" href="https://github.com/emrekasg/vardis/releases/latest">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap">
+    <article class="prose">
+      <h1>Privacy</h1>
+      <p class="lede">Vardis is free forever and collects nothing. This page says exactly what it reads, what it keeps, and when it talks to the internet.</p>
+
+      <h2>What Vardis reads on your Mac</h2>
+      <ul>
+        <li><strong>System and process statistics.</strong> CPU, memory, energy, disk and network counters for running apps, read through public macOS interfaces.</li>
+        <li><strong>Claude Code files.</strong> The folders Claude Code uses, such as <code>~/.claude</code>, to show sessions, token usage and cost. In the direct download, Vardis also reads the Claude Code sign-in from your Keychain so it can ask for your plan limits.</li>
+        <li><strong>Folders you choose.</strong> For Disk Cleanup, Vardis looks at developer caches and the project folders you set. In the App Store version it sees only folders you pick.</li>
+      </ul>
+      <p>All of this is read on your Mac and stays there.</p>
+
+      <h2>What Vardis stores on your Mac</h2>
+      <ul>
+        <li><strong>History.</strong> A local database of past readings in <code>~/Library/Application Support/Vardis</code>. Older data is thinned out over time.</li>
+        <li><strong>Search index.</strong> A local index of your Claude Code session text, so you can search past sessions. It lives in the same folder.</li>
+        <li><strong>Settings.</strong> Your preferences, stored by macOS.</li>
+      </ul>
+      <p>Delete that folder and the history and index are gone. Nothing is copied anywhere else.</p>
+
+      <h2>When Vardis goes online</h2>
+      <ol>
+        <li><strong>Update check, direct download only.</strong> Vardis fetches <code>vardis.app/appcast.xml</code> to see if a new version exists. The request carries nothing about you or what your Mac is doing. You can turn it off in Settings. The App Store version is updated by the App Store.</li>
+        <li><strong>Your Claude plan limits.</strong> To show how much of your plan you have used, Vardis asks <code>api.anthropic.com</code> using your own Claude Code sign-in. Your token goes only to Anthropic, the same place Claude Code sends it.</li>
+      </ol>
+
+      <h2>What Vardis never collects</h2>
+      <ul>
+        <li>No account and no sign-up.</li>
+        <li>No analytics, usage tracking or telemetry.</li>
+        <li>No crash reports.</li>
+        <li>No advertising identifiers and no third-party code that reports anywhere.</li>
+      </ul>
+      <p>There is no Vardis server. There is nowhere for your data to go.</p>
+
+      <h2>This website</h2>
+      <p>vardis.app uses no cookies, no analytics and no scripts, and loads nothing from other sites.</p>
+
+      <h2>Check for yourself</h2>
+      <p>Vardis is open source under the MIT License. You can read the code, build it yourself, or watch its network activity with any firewall app. Questions go to <a href="https://github.com/emrekasg/vardis/issues">GitHub issues</a>.</p>
+
+      <div class="actions">
+        <a class="button" href="https://github.com/emrekasg/vardis/releases/latest">Download for Mac</a>
+      </div>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>&copy; 2026 Vardis contributors</p>
+      <nav aria-label="Footer">
+        <a href="https://github.com/emrekasg/vardis">GitHub</a>
+        <a href="/privacy" aria-current="page">Privacy</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

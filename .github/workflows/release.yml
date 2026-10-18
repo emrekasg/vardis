@@ -1,0 +1,105 @@
+name: Release
+
+# TODO: this workflow is a stub. Nothing below the checkout runs yet.
+# Uncomment and finish each step once signing certificates and the
+# notarization credentials exist as repository secrets.
+#
+# Secrets this workflow will use (names only, values live in GitHub settings):
+#   DEVELOPER_ID_CERT_P12        base64 Developer ID Application certificate
+#   DEVELOPER_ID_CERT_PASSWORD   password for the .p12
+#   KEYCHAIN_PASSWORD            password for the temporary build keychain
+#   APPLE_TEAM_ID                Apple Developer team id
+#   NOTARY_APPLE_ID              Apple ID used by notarytool
+#   NOTARY_APP_PASSWORD          app-specific password for that Apple ID
+#   SPARKLE_ED_PRIVATE_KEY       EdDSA key that signs the appcast entries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, for example 0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, notarize and publish
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: TODO
+        run: echo "Release pipeline not implemented yet. See the commented steps in release.yml."
+
+      # - name: Install tools
+      #   run: brew install xcodegen create-dmg
+      #
+      # - name: Generate Xcode project
+      #   run: xcodegen generate
+      #
+      # - name: Import signing certificate
+      #   env:
+      #     CERT_P12: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+      #     CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+      #     KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      #   run: |
+      #     echo "$CERT_P12" | base64 --decode > cert.p12
+      #     security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+      #     security default-keychain -s build.keychain
+      #     security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+      #     security import cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
+      #     security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+      #     rm cert.p12
+      #
+      # - name: Archive
+      #   run: |
+      #     xcodebuild -project Vardis.xcodeproj -scheme Vardis \
+      #       -configuration Release \
+      #       -archivePath build/Vardis.xcarchive \
+      #       MARKETING_VERSION=${{ inputs.version }} \
+      #       DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
+      #       CODE_SIGN_IDENTITY="Developer ID Application" \
+      #       archive
+      #     xcodebuild -exportArchive \
+      #       -archivePath build/Vardis.xcarchive \
+      #       -exportOptionsPlist Config/ExportOptions-DeveloperID.plist \
+      #       -exportPath build/export
+      #
+      # - name: Build DMG
+      #   run: |
+      #     create-dmg --volname "Vardis" --app-drop-link 480 160 \
+      #       build/Vardis-${{ inputs.version }}.dmg build/export/Vardis.app
+      #
+      # - name: Notarize
+      #   env:
+      #     NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+      #     NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+      #     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      #   run: |
+      #     xcrun notarytool submit build/Vardis-${{ inputs.version }}.dmg \
+      #       --apple-id "$NOTARY_APPLE_ID" \
+      #       --password "$NOTARY_APP_PASSWORD" \
+      #       --team-id "$APPLE_TEAM_ID" \
+      #       --wait
+      #
+      # - name: Staple
+      #   run: xcrun stapler staple build/Vardis-${{ inputs.version }}.dmg
+      #
+      # - name: Sign appcast entry
+      #   env:
+      #     SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+      #   run: echo "TODO: run Sparkle sign_update and update website/appcast.xml"
+      #
+      # - name: Publish GitHub Release
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
+      #   run: |
+      #     gh release create "v${{ inputs.version }}" \
+      #       build/Vardis-${{ inputs.version }}.dmg \
+      #       --title "Vardis ${{ inputs.version }}" \
+      #       --generate-notes

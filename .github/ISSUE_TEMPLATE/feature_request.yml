@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest something Vardis should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to find out or do on your Mac?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How you imagine Vardis could help.
+  - type: checkboxes
+    id: promise
+    attributes:
+      label: The privacy promise
+      options:
+        - label: This idea works without sending any data off the Mac.
+          required: true

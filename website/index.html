@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vardis: see what your Mac is doing, and why</title>
+  <meta name="description" content="Vardis is a fast, native Mac app that shows what your Mac is doing right now and why, keeps a history you can rewind, cleans developer junk safely, and keeps Claude Code in view. Free forever. Collects nothing.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1116" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://vardis.app/">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Vardis">
+  <meta property="og:title" content="Vardis: see what your Mac is doing, and why">
+  <meta property="og:description" content="A fast, native Mac app. Live activity by app, a rewindable history, safe developer cleanup and Claude Code in view. Free forever. Collects nothing.">
+  <meta property="og:url" content="https://vardis.app/">
+  <meta property="og:image" content="https://vardis.app/assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="The Vardis Now screen with live CPU, memory, GPU, disk, network and battery readouts.">
+  <meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Vardis home">
+        <img src="/assets/icon-256.png" alt="" width="28" height="28">
+        Vardis
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a class="hide-small" href="#privacy">Privacy</a>
+        <a class="hide-small" href="https://github.com/emrekasg/vardis">GitHub</a>
+        <a class="button button-small" href="https://github.com/emrekasg/vardis/releases/latest">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="hero">
+      <div class="wrap">
+        <h1>See what your Mac is doing, and why.</h1>
+        <p class="lede">Vardis shows which app is using your CPU, memory, battery, disk and network, keeps a history you can rewind, cleans developer junk safely, and keeps Claude Code in view.</p>
+        <div class="actions">
+          <a class="button button-large" href="https://github.com/emrekasg/vardis/releases/latest">Download for Mac</a>
+        </div>
+        <p class="promise">Free forever. Collects nothing.</p>
+        <p class="status">In development. First release planned for November 2026. macOS 15 or later.</p>
+
+        <div class="hero-shot shot">
+          <picture>
+            <source srcset="/assets/screens/now-dark.webp" media="(prefers-color-scheme: dark)">
+            <img src="/assets/screens/now.webp" width="1442" height="902" fetchpriority="high"
+                 alt="The Vardis Now screen. Tiles show CPU at 18 percent, 21.4 GB of memory in use, GPU, free disk space, network, battery, Neural Engine and Claude Code plan usage, each with the app using it most, above breakdowns of memory and power by app.">
+          </picture>
+        </div>
+      </div>
+    </div>
+
+    <section aria-labelledby="shows-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="shows-title">What it shows you</h2>
+          <p>A thousand processes become the sixty apps you actually run, each with a reason attached.</p>
+        </div>
+
+        <div class="feature">
+          <div class="feature-text">
+            <h3>Now</h3>
+            <p>Live readings for CPU, memory, GPU, disk, network, battery and the Neural Engine, refreshed every second while you look. Each one names the app behind it. Any reading can sit in the menu bar on its own.</p>
+          </div>
+          <div class="shot shot-narrow">
+            <img src="/assets/screens/menu-bar.webp" width="540" height="500" loading="lazy"
+                 alt="The Vardis menu bar dropdown showing Claude plan usage, three running sessions, the apps using the most right now, and 48.3 GB that can be cleaned.">
+          </div>
+        </div>
+
+        <div class="feature flip">
+          <div class="feature-text">
+            <h3>Apps and history</h3>
+            <p>Every app keeps a record of what it did: hosts it connected to, memory it gained, moments it stopped responding. Vardis keeps that history on your Mac, so you can rewind to the moment the fans spun up and see why.</p>
+          </div>
+          <div class="shot">
+            <img src="/assets/screens/apps.webp" width="1442" height="902" loading="lazy"
+                 alt="The Apps screen. 62 apps grouped from 1,084 processes. Slack is selected, showing memory growing from 1.2 to 2.9 GB over three days, flagged as a likely leak, with a list of recent operations.">
+          </div>
+        </div>
+
+        <div class="feature">
+          <div class="feature-text">
+            <h3>Disk Cleanup</h3>
+            <p>Finds what developers leave behind: Xcode DerivedData, old simulators, stale node_modules, Docker leftovers and package caches. Each item says how big it is, when it was last used, and whether it rebuilds. Everything goes to the Trash, so nothing is lost until you decide.</p>
+          </div>
+          <div class="shot">
+            <img src="/assets/screens/disk-cleanup.webp" width="1442" height="902" loading="lazy"
+                 alt="The Disk Cleanup screen. 48.3 GB can go to the Trash, grouped into Xcode, unavailable simulators, node_modules, Docker, package caches and large old files, each marked rebuildable, re-downloads or not rebuildable.">
+          </div>
+        </div>
+
+        <div class="feature flip">
+          <div class="feature-text">
+            <h3>Claude Code</h3>
+            <p>Vardis finds your Claude Code sessions on its own. See tokens, cost and how much of your plan is left, search every past session, and pick one up again in your terminal. Several accounts sit side by side.</p>
+          </div>
+          <div class="shot">
+            <img src="/assets/screens/claude-sessions.webp" width="1442" height="902" loading="lazy"
+                 alt="The Claude Code Sessions screen. Sessions grouped by topic, with one selected showing its summary, branch, pull request, conversation and a command to resume it.">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="fast-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="fast-title">Fast by design</h2>
+          <p>A monitor should never be the thing slowing your Mac down. Native Swift, no Electron, no web views.</p>
+        </div>
+        <ul class="numbers">
+          <li><strong>&lt; 50 ms</strong><span>to open the window</span></li>
+          <li><strong>&lt; 16 ms</strong><span>to switch screens</span></li>
+          <li><strong>&lt; 0.1%</strong><span>CPU while idle</span></li>
+          <li><strong>&lt; 40 MB</strong><span>memory while idle</span></li>
+        </ul>
+        <p class="footnote">These are release gates, measured on an M1 with 8 GB of memory. A build that misses one does not ship.</p>
+      </div>
+    </section>
+
+    <section id="privacy" aria-labelledby="privacy-title">
+      <div class="wrap">
+        <div class="privacy-block">
+          <h2 id="privacy-title">Vardis collects nothing.</h2>
+          <p>No account, no analytics, no crash reports. There is no Vardis server, so there is nowhere for your data to go. Everything it reads and remembers stays on your Mac. It goes online for two things only.</p>
+          <ul class="online">
+            <li><strong>Checking for updates</strong><span>Only in the direct download, and you can turn it off.</span></li>
+            <li><strong>Your Claude plan limits</strong><span>Asked of Anthropic with your own sign-in, sent only to Anthropic.</span></li>
+          </ul>
+          <p class="more"><a href="/privacy">Read exactly what Vardis reads and stores</a></p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="faq-title">
+      <div class="wrap">
+        <div class="faq">
+          <h2 id="faq-title">Questions</h2>
+          <div class="faq-list">
+            <details>
+              <summary>Is it really free?</summary>
+              <p>Yes, free forever. There is no paid tier, no trial and no account. Vardis is open source under the MIT License.</p>
+            </details>
+            <details>
+              <summary>What does it collect?</summary>
+              <p>Nothing. There is no analytics, no telemetry and no crash reporting. Vardis only goes online to check for updates, which you can turn off, and to ask Anthropic for your own Claude plan limits. The <a href="/privacy">privacy page</a> has the details.</p>
+            </details>
+            <details>
+              <summary>Should I get the App Store version or the direct download?</summary>
+              <p>Both come from the same code. The App Store version runs in Apple's sandbox, so it cleans only folders you pick, reads Claude Code after you choose its folder once, and cannot switch between Claude accounts or show system processes and sensors. The direct download does all of that and updates itself.</p>
+            </details>
+            <details>
+              <summary>Does it run on Apple silicon and Intel Macs?</summary>
+              <p>Yes. Vardis is a native app for both, on macOS 15 or later.</p>
+            </details>
+            <details>
+              <summary>Is it open source?</summary>
+              <p>Yes. The code is on <a href="https://github.com/emrekasg/vardis">GitHub</a> under the MIT License. You can read it, build it yourself and send changes. The Vardis name and logo are not covered by the license.</p>
+            </details>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="closing" aria-labelledby="closing-title">
+      <div class="wrap">
+        <h2 id="closing-title">Know what your Mac is doing.</h2>
+        <div class="actions">
+          <a class="button button-large" href="https://github.com/emrekasg/vardis/releases/latest">Download for Mac</a>
+        </div>
+        <p class="promise">Free forever. Collects nothing.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>&copy; 2026 Vardis contributors</p>
+      <nav aria-label="Footer">
+        <a href="https://github.com/emrekasg/vardis">GitHub</a>
+        <a href="/privacy">Privacy</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
