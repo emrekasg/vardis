@@ -57,8 +57,10 @@ final class LiveModel {
     }
     var isPaused = false
 
-    /// Called on every sample, visible or not (menu bar titles).
-    @ObservationIgnored var onTick: (@MainActor (Snapshot) -> Void)?
+    /// Called on every sample, visible or not (menu bar titles, history writer, alerts).
+    @ObservationIgnored private var tickObservers: [@MainActor (Snapshot) -> Void] = []
+
+    func onEveryTick(_ observer: @escaping @MainActor (Snapshot) -> Void) { tickObservers.append(observer) }
 
     @ObservationIgnored private let sampler = Sampler()
     @ObservationIgnored private var loop: Task<Void, Never>?
@@ -118,7 +120,7 @@ final class LiveModel {
         if working.appMemory.count > 200 { working.appMemory = working.appMemory.filter { seen.contains($0.key) } }
         working.ownFootprint = Self.currentFootprint()
         if !presenters.isEmpty { state = working }
-        onTick?(s)
+        for o in tickObservers { o(s) }
     }
 
     private static func currentFootprint() -> UInt64 {

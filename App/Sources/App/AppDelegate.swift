@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = wc
         aux = AuxWindows(live: live)
         statusBar = StatusBarController(live: live) { [weak wc] screen in wc?.show(screen) }
-        live.onTick = { [weak self] s in self?.statusBar?.update(s) }
+        live.onEveryTick { [weak self] s in self?.statusBar?.update(s) }
         live.start()
         models.start(live: live)
         hotKey = GlobalHotKey { [weak wc] in wc?.show() }
