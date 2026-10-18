@@ -4,128 +4,45 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy | Vardis</title>
-<meta name="description" content="Vardis collects nothing. What it reads, what it keeps on your Mac, and the only two times it goes online.">
-<meta name="theme-color" content="#fbfbfa">
+<meta name="description" content="Vardis collects nothing.">
+<meta name="theme-color" content="#f7f8fa">
 <meta name="color-scheme" content="light">
 <link rel="canonical" href="https://vardis.app/privacy.html">
 <link rel="icon" href="/favicon.ico" sizes="32x32">
-<link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicon-16.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicon-32.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://vardis.app/privacy.html">
-<meta property="og:site_name" content="Vardis">
-<meta property="og:title" content="Vardis: see what your Mac is doing, and why">
-<meta property="og:description" content="Live readouts, a private black box of your day, safe developer cleanup and Claude Code usage. Native, free forever, collects nothing.">
+<meta property="og:title" content="Vardis">
+<meta property="og:description" content="A small activity monitor for macOS. Free, open source, collects nothing.">
 <meta property="og:image" content="https://vardis.app/assets/img/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Vardis. See what your Mac is doing, and why. A native Mac app, free and open source.">
+<meta property="og:image:alt" content="Vardis. A small activity monitor for macOS.">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="/assets/css/site.css">
-<script src="/assets/js/site.js" defer></script>
 </head>
 <body>
-<svg class="sprite" aria-hidden="true" focusable="false">
-  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 2.5v3M15 2.5v3M9 18.5v3M15 18.5v3M2.5 9h3M2.5 15h3M18.5 9h3M18.5 15h3"/></symbol>
-  <symbol id="i-mem" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 11v2M11 11v2M15 11v2M7 17v2.5M12 17v2.5M17 17v2.5"/></symbol>
-  <symbol id="i-gpu" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
-  <symbol id="i-disk" viewBox="0 0 24 24"><path d="M3 13.5 5.6 6.4A2 2 0 0 1 7.5 5h9a2 2 0 0 1 1.9 1.4L21 13.5V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3.5Z"/><path d="M3 13.5h18M7 16h.01M10 16h.01"/></symbol>
-  <symbol id="i-net" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.5 3.8 5.5 3.8 9s-1.2 6.5-3.8 9c-2.6-2.5-3.8-5.5-3.8-9S9.4 5.5 12 3Z"/></symbol>
-  <symbol id="i-bat" viewBox="0 0 24 24"><rect x="2.5" y="7" width="17" height="10" rx="2.5"/><path d="M22 10.5v3M6 10.5v3M9.5 10.5v3"/></symbol>
-  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2.5 4.5 13.5H12l-1 8 8.5-11H12l1-8Z"/></symbol>
-  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></symbol>
-  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
-  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 18a9 9 0 1 1 15 0"/><path d="m12 13 4-5"/></symbol>
-  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6 7l1 13h10l1-13M10 11v5.5M14 11v5.5"/></symbol>
-  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
-  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M6.5 7h11v3.5a5.5 5.5 0 0 1-11 0V7ZM12 16v5"/></symbol>
-  <symbol id="i-box" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></symbol>
-  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
-  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
-  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></symbol>
-  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v5M12 16v5M3 12h5M16 12h5M5.6 5.6l3.2 3.2M15.2 15.2l3.2 3.2M5.6 18.4l3.2-3.2M15.2 8.8l3.2-3.2"/></symbol>
-  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5a6.5 6.5 0 0 1 13 0M16 5.2a3.5 3.5 0 0 1 0 6.6M18 14a6.5 6.5 0 0 1 3.5 5.5"/></symbol>
-  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5.5h16v10H9l-5 4v-14Z"/></symbol>
-  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
-  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M9.3 20V4M14.6 20v-7M20 20V8"/></symbol>
-  <symbol id="i-gh" viewBox="0 0 24 24"><path class="fillc" d="M12 2.2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.6-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.300.1-2.7 0 0 .8-.3 2.8 1a9.6 9.6 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2.2Z"/></symbol>
-  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
-  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v13M6.5 11.5 12 17l5.5-5.5M5 20.5h14"/></symbol>
-  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
-  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol>
-  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
-</svg>
-<a class="skip" href="#main">Skip to content</a>
-<div class="wrap top-mast"><div class="mast">
-      <a class="mark" href="/" aria-label="Vardis home"><img src="/assets/img/icon-128.webp" width="36" height="36" alt=""><span>Vardis</span></a>
-      <a class="btn btn-line btn-sm" href="/">Back to the home page</a>
-    </div></div>
-<main id="main">
-<article class="doc">
-  <div class="wrap">
-    <h1 class="display">Privacy</h1>
-    <p class="lead">Vardis is free forever and collects nothing. This page says exactly what it reads, what it keeps on your Mac, and the only two times it talks to the internet.</p>
-
-    <h2>The short version</h2>
-    <ul>
-      <li>No account and no sign-up.</li>
-      <li>No analytics, usage tracking or telemetry.</li>
-      <li>No crash reports.</li>
-      <li>No advertising identifiers and no third-party code.</li>
-      <li>There is no Vardis server. There is nowhere for your data to go.</li>
-    </ul>
-
-    <h2>What Vardis reads on your Mac</h2>
-    <ul>
-      <li><strong>System and process statistics.</strong> CPU, memory, energy, disk and network counters for running apps and processes, read through public macOS interfaces.</li>
-      <li><strong>Claude Code files.</strong> The folders Claude Code uses, such as <code>~/.claude</code>, <code>~/.claude-*</code> and <code>$CLAUDE_CONFIG_DIR</code>, to show sessions, token usage and cost. In the direct download, Vardis also reads the Claude Code sign-in from your Keychain (the item <code>Claude Code-credentials</code>) so it can ask for your plan limits.</li>
-      <li><strong>Folders for Disk Cleanup.</strong> Developer caches and the project folders you set up. In the App Store edition it only sees folders you pick.</li>
-    </ul>
-    <p>All of this is read on your Mac and stays there.</p>
-
-    <h2>What Vardis keeps on your Mac</h2>
-    <ul>
-      <li><strong>History.</strong> A local database of past readings in <code>~/Library/Application Support/Vardis</code>. Older data is thinned out over time.</li>
-      <li><strong>Search index.</strong> A local index of your Claude Code session text, so you can search past sessions. It lives in the same folder.</li>
-      <li><strong>Settings.</strong> Your preferences, stored by macOS.</li>
-    </ul>
-    <p>Delete that folder and the history and index are gone. Nothing is copied anywhere else.</p>
-
-    <h2>When Vardis goes online</h2>
-    <p>Only for these two things:</p>
-    <ol>
-      <li><strong>Checking for updates, in the direct download only.</strong> Vardis fetches <code>https://vardis.app/appcast.xml</code> to see whether a new version exists. The request carries the app version and the standard details any download has, and nothing about you or what your Mac is doing. You can turn it off in Settings. The App Store edition gets updates from the App Store instead.</li>
-      <li><strong>Your Claude plan limits.</strong> To show how much of your plan you have used, Vardis sends a request to <code>api.anthropic.com</code> with your own Claude Code sign-in. Your sign-in is sent only there, the same place Claude Code itself sends it. Anthropic's privacy policy covers that request.</li>
-    </ol>
-
-    <h2>Disk Cleanup never deletes</h2>
-    <p>Anything you clean up is moved to the Trash, so you can put it back. Vardis does not empty the Trash for you.</p>
-
-    <h2>This website</h2>
-    <p>vardis.app is a set of static files. It sets no cookies, runs no analytics and loads nothing from other websites. Like every web host, Cloudflare, which serves these files, handles the technical details of each request in order to deliver it.</p>
-
-    <h2>Check for yourself</h2>
-    <p>The code is open source under the MIT License. You can read it, build it yourself, or watch Vardis's network activity with any firewall tool.</p>
-
-    <h2>Questions</h2>
-    <p>Open an issue on <a href="https://github.com/emrekasg/vardis/issues">GitHub</a>.</p>
-    <p class="meta">Last updated 18 October 2026.</p>
-  </div>
-</article>
+<header class="wrap mast"><a href="/" class="mark"><img src="/assets/img/icon-128.webp" width="28" height="28" alt="">Vardis</a></header>
+<main class="wrap doc">
+  <h1>Privacy</h1>
+  <p>Vardis collects nothing. There is no account, no analytics, no crash reporting and no third-party code.</p>
+  <h2>What stays on your Mac</h2>
+  <p>Vardis reads system and process statistics, your Claude Code files (such as <code>~/.claude</code>) and the folders you choose for Disk Cleanup. It keeps a history of readings and a search index in <code>~/Library/Application Support/Vardis</code>. Delete that folder and it is gone.</p>
+  <h2>When it goes online</h2>
+  <ul>
+    <li><b>Update check</b> (direct download only): fetches <code>https://vardis.app/appcast.xml</code>. You can turn it off in Settings.</li>
+    <li><b>Claude plan limits</b>: asks <code>api.anthropic.com</code> using your own Claude Code sign-in, the same place Claude Code sends it.</li>
+  </ul>
+  <h2>This website</h2>
+  <p>Static files. No cookies, no analytics, nothing loaded from other sites.</p>
+  <p>Questions: <a href="https://github.com/emrekasg/vardis/issues">GitHub issues</a>.</p>
 </main>
 <footer class="foot">
   <div class="wrap foot-in">
-    <p class="foot-brand"><img src="/assets/img/icon-128.webp" width="20" height="20" alt="" loading="lazy">Vardis</p>
-    <nav class="foot-links" aria-label="Footer">
-      <a href="/privacy.html">Privacy</a>
-      <a href="https://github.com/emrekasg/vardis">Source code</a>
-      <a href="https://github.com/emrekasg/vardis/issues">Report an issue</a>
-      <a href="https://github.com/emrekasg/vardis/blob/main/LICENSE">MIT License</a>
-      <button class="foot-motion" type="button" data-motion-toggle aria-pressed="false">Pause motion</button>
-    </nav>
-    <p class="foot-legal">An independent project, not affiliated with Apple or Anthropic. Mac and macOS are trademarks of Apple Inc. Claude is a trademark of Anthropic.</p>
+    <span>Vardis is MIT licensed. Not affiliated with Apple or Anthropic.</span>
+    <nav aria-label="Footer"><a href="/privacy.html">Privacy</a><a href="https://github.com/emrekasg/vardis">GitHub</a><a href="https://github.com/emrekasg/vardis/issues">Issues</a></nav>
   </div>
 </footer>
 </body>

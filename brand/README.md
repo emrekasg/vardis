@@ -22,13 +22,11 @@ Type is the system font (SF Pro on Apple platforms) in the app.
 
 ## Website (vardis.app)
 
-The site lives in `website/` and is plain static files: no build step, no third-party requests, a strict CSP (`website/_headers`) with no inline scripts or style attributes.
+Plain static files in `website/`, no build step, no third-party requests, strict CSP in `website/_headers`. Two screens, light, no navigation bar: icon, name, one sentence, Download and GitHub, and a fictional Now window whose numbers tick (off under reduced motion); then a short feature list, the privacy line and a footer. No dates, benchmarks or comparisons.
 
-- **Look:** light pages, no navigation bar. Bold system sans headlines (700, tight tracking), with the key phrase in the brand gradient (`#0e9f9a → #1a8fd8 → #1a6dcb`, from the icon's teal→blue stroke). Navy `#0b1220` for primary buttons and for the product-art panels (hero stage, Claude Code stage). Soft teal/blue glows and a faint 64 px grid behind sections, used sparingly.
-- **Product art:** the screens are recreated in HTML/SVG/canvas with fictional data and animated (live tiles, processes collapsing into apps, a scrubbable day timeline, cleanup moving to the Trash with Undo, Claude Code tabs). Tile colours follow the app (CPU blue, memory amber, GPU pink, disk teal, network violet, battery green).
-- **Real screenshots:** only the top row of the Now screen is used (`website/assets/img/now-real-*.webp`). Real screens contain project names, paths, session titles and costs; never publish them unredacted.
-- **Motion:** transform/opacity only, paused off screen and in hidden tabs, started after the `load` event, off under `prefers-reduced-motion`, and a Pause motion button.
-- **Share image:** `website/assets/img/og.png` (1200 × 630) is rendered from `website-src/og/og.html` with headless Chrome.
+- `website/assets/img/og.png` is rendered from `website-src/og/og.html` with headless Chrome.
+- `brand/now-window.png` (used in the README) is rendered from `website-src/now-window.html`.
+- Real app screenshots contain personal data (project names, paths, session titles, costs). Do not publish them.
 
 ## Use of the name and logo
 

@@ -3,25 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vardis: see what your Mac is doing, and why</title>
-<meta name="description" content="Vardis is a free, open-source Mac app that shows live CPU, memory, GPU, disk, network and battery, names the app behind each one, keeps a private black box of your day, cleans developer junk safely and puts Claude Code usage in view.">
-<meta name="theme-color" content="#fbfbfa">
+<title>Vardis, a small activity monitor for macOS</title>
+<meta name="description" content="Vardis is a small activity monitor for macOS. Free, open source, collects nothing.">
+<meta name="theme-color" content="#f7f8fa">
 <meta name="color-scheme" content="light">
 <link rel="canonical" href="https://vardis.app/">
 <link rel="icon" href="/favicon.ico" sizes="32x32">
-<link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicon-16.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicon-32.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/site.webmanifest">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://vardis.app/">
-<meta property="og:site_name" content="Vardis">
-<meta property="og:title" content="Vardis: see what your Mac is doing, and why">
-<meta property="og:description" content="Live readouts, a private black box of your day, safe developer cleanup and Claude Code usage. Native, free forever, collects nothing.">
+<meta property="og:title" content="Vardis">
+<meta property="og:description" content="A small activity monitor for macOS. Free, open source, collects nothing.">
 <meta property="og:image" content="https://vardis.app/assets/img/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Vardis. See what your Mac is doing, and why. A native Mac app, free and open source.">
+<meta property="og:image:alt" content="Vardis. A small activity monitor for macOS.">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="/assets/css/site.css">
 <script src="/assets/js/site.js" defer></script>
@@ -38,53 +36,33 @@
   <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
   <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 18a9 9 0 1 1 15 0"/><path d="m12 13 4-5"/></symbol>
-  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6 7l1 13h10l1-13M10 11v5.5M14 11v5.5"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
   <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M6.5 7h11v3.5a5.5 5.5 0 0 1-11 0V7ZM12 16v5"/></symbol>
   <symbol id="i-box" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></symbol>
-  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
-  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
-  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></symbol>
-  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v5M12 16v5M3 12h5M16 12h5M5.6 5.6l3.2 3.2M15.2 15.2l3.2 3.2M5.6 18.4l3.2-3.2M15.2 8.8l3.2-3.2"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5a6.5 6.5 0 0 1 13 0M16 5.2a3.5 3.5 0 0 1 0 6.6M18 14a6.5 6.5 0 0 1 3.5 5.5"/></symbol>
   <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5.5h16v10H9l-5 4v-14Z"/></symbol>
   <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M9.3 20V4M14.6 20v-7M20 20V8"/></symbol>
   <symbol id="i-gh" viewBox="0 0 24 24"><path class="fillc" d="M12 2.2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.6-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.300.1-2.7 0 0 .8-.3 2.8 1a9.6 9.6 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2.2Z"/></symbol>
-  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v13M6.5 11.5 12 17l5.5-5.5M5 20.5h14"/></symbol>
-  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
-  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol>
-  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
 </svg>
 
-<a class="skip" href="#main">Skip to content</a>
-
-<main id="main">
-
-<!-- HERO -->
-<section class="hero" aria-labelledby="hero-title">
-  <div class="wrap">
-    <div class="mast">
-      <a class="mark" href="/" aria-label="Vardis home"><img src="/assets/img/icon-128.webp" width="36" height="36" alt=""><span>Vardis</span></a>
-      <p class="mast-note">For macOS 15 and later. Coming November 2026.</p>
-    </div>
-
-    <h1 id="hero-title" class="display">See what your Mac is doing, <em>and why.</em></h1>
-
-    <div class="hero-row">
-      <p class="live-line" aria-live="off"><span class="live-dot" aria-hidden="true"></span><span class="ll" data-ll><b data-ll-app>Xcode</b> <span data-ll-verb>is using</span> <strong data-ll-num>41%</strong> <span data-ll-tail>of the CPU.</span></span></p>
-      <div class="hero-act">
-        <a class="btn btn-ink" href="https://github.com/emrekasg/vardis/releases/latest"><svg class="ic"><use href="#i-down"/></svg>Download for Mac</a>
-        <a class="btn btn-line" href="https://github.com/emrekasg/vardis"><svg class="ic"><use href="#i-gh"/></svg>Source</a>
+<main>
+  <section class="one">
+    <div class="wrap one-in">
+      <div class="intro">
+        <img class="icon" src="/assets/img/icon-256.webp" width="88" height="88" alt="">
+        <h1>Vardis</h1>
+        <p class="line">A small activity monitor for macOS. Free, open source, collects nothing.</p>
+        <div class="acts">
+          <a class="btn btn-dark" href="https://github.com/emrekasg/vardis/releases/latest"><svg class="ic"><use href="#i-down"/></svg>Download</a>
+          <a class="btn btn-line" href="https://github.com/emrekasg/vardis"><svg class="ic"><use href="#i-gh"/></svg>GitHub</a>
+        </div>
+        <p class="req">macOS 15 or later, Apple silicon and Intel.</p>
       </div>
-    </div>
-    <p class="hero-sub">A native Mac app for live readouts, a private black box of your day, safe developer cleanup and Claude Code usage. Free forever, open source, and it collects nothing.</p>
-  </div>
-
-  <div class="wrap stage-wrap" aria-hidden="true">
-    <div class="stage">
-      <div class="win">
+      <div class="pic" role="img" aria-label="The Vardis Now screen: CPU, memory, GPU, disk, network and battery tiles, each naming the app using the most.">
+        <div aria-hidden="true">
+        <div class="win">
         <div class="win-side">
           <div class="lights"><i></i><i></i><i></i></div>
           <p class="side-h">Mac</p>
@@ -107,7 +85,7 @@
           <div class="win-live"><span class="live-dot"></span><b>Live</b><span>updates every second</span></div>
           <div class="tiles">
             <div class="tile" data-tile="cpu"><p class="t-h"><svg class="ic"><use href="#i-cpu"/></svg>CPU</p><p class="t-sub">Now, 12 cores</p><p class="t-v"><span data-v>41</span><small>%</small></p><div class="spark" data-spark></div><p class="t-top">Top<b>Xcode</b><span data-top>21%</span></p></div>
-            <div class="tile" data-tile="mem"><p class="t-h"><svg class="ic"><use href="#i-mem"/></svg>Memory</p><p class="t-sub">In use of 36 GB <span class="ok">Normal</span></p><p class="t-v"><span data-v>21.4</span><small>GB</small></p><div class="spark" data-spark></div><p class="t-top">Top<b>Chrome</b><span data-top>6.8 GB</span></p></div>
+            <div class="tile" data-tile="mem"><p class="t-h"><svg class="ic"><use href="#i-mem"/></svg>Memory</p><p class="t-sub">In use of 36 GB</p><p class="t-v"><span data-v>21.4</span><small>GB</small></p><div class="spark" data-spark></div><p class="t-top">Top<b>Chrome</b><span data-top>6.8 GB</span></p></div>
             <div class="tile" data-tile="gpu"><p class="t-h"><svg class="ic"><use href="#i-gpu"/></svg>GPU</p><p class="t-sub">Apple M3 Max</p><p class="t-v"><span data-v>31</span><small>%</small></p><div class="spark" data-spark></div><p class="t-top">Top<b>Figma</b><span data-top>14%</span></p></div>
             <div class="tile" data-tile="disk"><p class="t-h"><svg class="ic"><use href="#i-disk"/></svg>Disk</p><p class="t-sub">Writing</p><p class="t-v"><span data-v>6.8</span><small>MB/s</small></p><div class="spark" data-spark></div><p class="t-top">Top<b>OrbStack</b><span data-top>5.1 MB/s</span></p></div>
             <div class="tile" data-tile="net"><p class="t-h"><svg class="ic"><use href="#i-net"/></svg>Network</p><p class="t-sub">Downloading</p><p class="t-v"><span data-v>2.4</span><small>MB/s</small></p><div class="spark" data-spark></div><p class="t-top">Top<b>Chrome</b><span data-top>1.9 MB/s</span></p></div>
@@ -115,386 +93,33 @@
           </div>
         </div>
       </div>
-      <div class="drop">
-        <p class="drop-h"><svg class="ic"><use href="#i-spark"/></svg><b>Personal</b><em>3 sessions</em></p>
-        <p class="drop-row"><span>5-hour window</span><b><span data-q>62</span>%</b></p>
-        <div class="qbar"><i data-qbar></i></div>
-        <p class="drop-row"><span>Weekly</span><b>41%</b></p>
-        <div class="qbar qbar-w"><i></i></div>
-        <p class="drop-note">Switches to Work at 90%</p>
-        <p class="drop-k">Using the most right now</p>
-        <p class="drop-app">Xcode<span data-d1>21% · 4.1 GB</span></p>
-        <p class="drop-app">Google Chrome<span>4% · 6.8 GB</span></p>
-        <p class="drop-app">Slack<span>1% · 2.9 GB</span></p>
-        <p class="drop-clean"><svg class="ic"><use href="#i-disk"/></svg>23.4 GB can be cleaned</p>
-      </div>
-    </div>
-    <button class="motion-btn" type="button" data-motion-toggle aria-pressed="false"><svg class="ic"><use href="#i-pause"/></svg><span>Pause motion</span></button>
-  </div>
-</section>
-
-<!-- PROMISE LINE -->
-<section class="band" aria-label="In short">
-  <div class="wrap band-in">
-    <p><b>Free forever.</b> No paid tier, no trial.</p>
-    <p><b>Collects nothing.</b> No account, analytics or crash reports.</p>
-    <p><b>Open source.</b> MIT licensed, on GitHub.</p>
-    <p><b>Native.</b> Swift and SwiftUI. Apple silicon and Intel.</p>
-  </div>
-</section>
-
-<!-- WHY -->
-<section class="ch" aria-labelledby="why-title">
-  <div class="wrap">
-    <h2 id="why-title" class="display-2 reveal">Activity Monitor gives you 1,500 process names. You wanted <em>one answer.</em></h2>
-    <dl class="qa">
-      <div class="reveal"><dt>Why are the fans on?</dt><dd>Xcode is using 92% of the CPU. A build started at 14:30.</dd></div>
-      <div class="reveal"><dt>Where did my disk space go?</dt><dd>OrbStack wrote 112 GB to disk today. 23 GB of build caches can go to the Trash.</dd></div>
-      <div class="reveal"><dt>Why did everything crawl at 3 pm?</dt><dd>Memory ran out. Chrome held 14 GB while Xcode was indexing.</dd></div>
-      <div class="reveal"><dt>Why didn't it sleep last night?</dt><dd>WhatsApp kept the Mac awake for 1 h 28 m.</dd></div>
-    </dl>
-  </div>
-</section>
-
-<!-- NOW -->
-<section class="ch" id="now" aria-labelledby="now-title">
-  <div class="wrap">
-    <div class="split-head">
-      <div>
-        <p class="label">Now</p>
-        <h2 id="now-title" class="display-2 reveal">Every number comes with <em>a name.</em></h2>
-      </div>
-      <p class="body body-l reveal">CPU, memory pressure and swap, GPU, disk, network and power, refreshed every second. Each reading says which app is behind it, so a spike is never a mystery.</p>
-    </div>
-    <figure class="shot reveal">
-      <img src="/assets/img/now-real-1440.webp" srcset="/assets/img/now-real-960.webp 960w, /assets/img/now-real-1440.webp 1440w, /assets/img/now-real-2200.webp 2200w" sizes="(min-width: 1320px) 1216px, calc(100vw - 56px)" width="1440" height="274" loading="lazy" decoding="async" alt="Four Now tiles from Vardis: CPU at 100 percent with Xcode on top, memory 22.2 GB in use with a pressure warning and Google Chrome on top, GPU at 36 percent, and disk with 57.9 GB free and Xcode writing the most.">
-      <figcaption>A real screenshot of the Now screen from a development build, on a busy evening.</figcaption>
-    </figure>
-    <dl class="trio">
-      <div class="reveal"><dt>Pressure, not just usage</dt><dd>Memory shows pressure, swap and compression, which is what decides whether a Mac feels slow.</dd></div>
-      <div class="reveal"><dt>Power by app</dt><dd>On battery, see which app is drawing the watts and how much of the day's energy it took.</dd></div>
-      <div class="reveal"><dt>In the menu bar</dt><dd>Every readout can be its own menu bar item. Glance, or open the window in about 35 ms.</dd></div>
-    </dl>
-  </div>
-</section>
-
-<!-- APPS -->
-<section class="ch" id="apps" aria-labelledby="apps-title">
-  <div class="wrap ch-grid">
-    <header class="ch-head">
-      <p class="label">Apps</p>
-      <h2 id="apps-title" class="display-3">1,500 processes. <em>Sixty apps</em> you recognise.</h2>
-      <p class="body">Chrome is not forty helpers. Vardis rolls every helper, renderer and background service into the app that launched it, then shows CPU, memory, energy and disk writes for the whole app.</p>
-      <p class="body">Quit or Force Quit from the list, always with a confirmation first.</p>
-    </header>
-    <div class="ch-body flow reveal" aria-hidden="true">
-      <div class="flow-head"><span><b>1,486</b> processes</span><svg class="ic"><use href="#i-arrow"/></svg><span><b>61</b> apps</span></div>
-      <canvas class="flow-canvas" data-flow width="600" height="440"></canvas>
-    </div>
-    <p class="sr-only">Diagram: about 1,500 separate processes collapse into a short list of apps, such as Google Chrome with 41 processes, Xcode with 18 and Slack with 9.</p>
-  </div>
-</section>
-
-<!-- BLACK BOX -->
-<section class="ch" id="blackbox" aria-labelledby="bb-title">
-  <div class="wrap">
-    <header class="ch-wide">
-      <p class="label">Today and Time Machine</p>
-      <h2 id="bb-title" class="display-2 reveal">A black box for your Mac.</h2>
-      <p class="body body-l reveal">Vardis records quietly, on your Mac, all day. Today writes the day up in plain language. Time Machine lets you rewind to any minute and says why the Mac slowed down.</p>
-    </header>
-
-    <div class="bb reveal">
-      <div class="bb-top">
-        <div><p class="bb-date">Sunday, 18 October</p><p class="bb-summary">A busy build day. Xcode carried the CPU, Chrome carried the battery.</p></div>
-      </div>
-      <div class="tl" data-tl tabindex="0" role="slider" aria-label="Rewind the day" aria-valuemin="0" aria-valuemax="1439" aria-valuenow="870" aria-valuetext="14:30">
-        <svg class="tl-svg" viewBox="0 0 1000 240" preserveAspectRatio="none" aria-hidden="true">
-          <defs><linearGradient id="tlg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a8fd8"/><stop offset="1" stop-color="#0e9f9a" stop-opacity=".85"/></linearGradient></defs>
-          <line class="tl-grid" x1="0" y1="226" x2="1000" y2="226"/>
-          <path class="a-xcode" data-area="xcode"/>
-          <path class="a-chrome" data-area="chrome"/>
-          <path class="a-else" data-area="else"/>
-        </svg>
-        <div class="tl-events" data-events aria-hidden="true"></div>
-        <div class="tl-axis" aria-hidden="true"><span>00:00</span><span>04:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span><span>24:00</span></div>
-        <div class="tl-head" data-head aria-hidden="true"><i></i>
-          <div class="tl-tip" data-tip><b data-tip-t>14:30</b><span data-tip-x>Xcode build, CPU 92%</span></div>
-        </div>
-      </div>
-      <div class="tl-legend" aria-hidden="true"><span class="lg lg-x">Xcode</span><span class="lg lg-c">Chrome</span><span class="lg lg-e">Everything else</span><span class="tl-hint">Drag, or use the arrow keys, to rewind</span></div>
-
-      <div class="bb-grid">
-        <div>
-          <p class="bb-k">What stood out</p>
-          <ul class="stood" data-stood>
-            <li data-at="140"><svg class="ic"><use href="#i-moon"/></svg><div><b>WhatsApp kept the Mac awake for 1 h 28 m</b><span>It asked macOS not to sleep, longest from 01:40 to 03:08.</span></div></li>
-            <li data-at="610"><svg class="ic"><use href="#i-bat"/></svg><div><b>Chrome used 38% of the battery today</b><span>Two tabs kept the GPU busy for most of the morning.</span></div></li>
-            <li data-at="870"><svg class="ic"><use href="#i-disk"/></svg><div><b>Xcode wrote 14.2 GB to disk</b><span>DerivedData is now 31 GB. Disk Cleanup can take 22 GB of it.</span></div></li>
-            <li data-at="1140"><svg class="ic"><use href="#i-mem"/></svg><div><b>Memory ran short 2 times</b><span>First at 19:00. Time Machine shows which apps held it.</span></div></li>
-          </ul>
-        </div>
-        <div class="why" data-why>
-          <p class="bb-k">At <span data-why-t>14:30</span></p>
-          <p class="why-line" data-why-line>Your Mac slowed down because Xcode was building and the CPU was busy.</p>
-          <ul class="why-apps" data-why-apps>
-            <li><span>Xcode</span><b>66%</b></li><li><span>Google Chrome</span><b>9%</b></li><li><span>Everything else</span><b>8%</b></li>
-          </ul>
+      
         </div>
       </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- CLEANUP -->
-<section class="ch" id="cleanup" aria-labelledby="cl-title">
-  <div class="wrap ch-grid">
-    <header class="ch-head">
-      <p class="label">Disk Cleanup</p>
-      <h2 id="cl-title" class="display-3">Take back the space <em>your tools forgot.</em></h2>
-      <p class="body">Xcode DerivedData, old simulators, <code>node_modules</code> in projects you stopped touching, package caches. Vardis finds them and says what each one is and whether it rebuilds itself.</p>
-      <ul class="notes">
-        <li><b>Moves to the Trash.</b> It never deletes, so you can always put things back.</li>
-        <li><b>Recent projects are protected.</b> Anything you used lately is never offered.</li>
-        <li><b>Docker stays Docker's.</b> Unused images and containers are freed with Docker's own command.</li>
+  <section class="two">
+    <div class="wrap two-in">
+      <h2>What it does</h2>
+      <ul class="list">
+        <li><b>Now</b><span>CPU, memory, GPU, disk, network and battery, with the app behind each.</span></li>
+        <li><b>Apps</b><span>Processes grouped into the apps that launched them. Quit or force quit.</span></li>
+        <li><b>Today</b><span>A short written summary of the day.</span></li>
+        <li><b>Time Machine</b><span>Go back to any minute and see what was running.</span></li>
+        <li><b>Disk Cleanup</b><span>Developer caches and old build files, moved to the Trash.</span></li>
+        <li><b>Claude Code</b><span>Sessions, search, token usage and plan limits.</span></li>
+        <li><b>Ports and Docker</b><span>Local servers and containers.</span></li>
+        <li><b>Menu bar</b><span>Readouts in the menu bar, and a ⌘K palette.</span></li>
       </ul>
-    </header>
-    <div class="ch-body cu reveal" data-cu aria-hidden="true">
-      <div class="cu-top">
-        <p class="cu-total"><span data-cu-total>23.4</span> GB <small>selected</small></p>
-        <span class="cu-trash" data-cu-trash><svg class="ic"><use href="#i-trash"/></svg></span>
-      </div>
-      <div class="cu-bar"><i class="cu-else"></i><i class="cu-dev"></i><i class="cu-sel" data-cu-sel></i></div>
-      <ul class="cu-list">
-        <li data-gb="8.4"><span class="cb"><svg class="ic"><use href="#i-check"/></svg></span><b>DerivedData</b><em>Xcode, 9 old projects</em><span class="tag">Rebuilds</span><span class="sz">8.4 GB</span></li>
-        <li data-gb="6.1"><span class="cb"><svg class="ic"><use href="#i-check"/></svg></span><b>iOS 17.5 Simulator</b><em>unused for 4 months</em><span class="tag">Re-downloads</span><span class="sz">6.1 GB</span></li>
-        <li data-gb="4.7"><span class="cb"><svg class="ic"><use href="#i-check"/></svg></span><b>node_modules</b><em>weather-demo, 5 months ago</em><span class="tag">Reinstalls</span><span class="sz">4.7 GB</span></li>
-        <li data-gb="4.2"><span class="cb"><svg class="ic"><use href="#i-check"/></svg></span><b>Package caches</b><em>npm, pnpm, Homebrew</em><span class="tag">Re-downloads</span><span class="sz">4.2 GB</span></li>
-        <li class="cu-locked"><span class="cb cb-lock"><svg class="ic"><use href="#i-lock"/></svg></span><b>node_modules</b><em>storefront, used 2 days ago</em><span class="tag">Protected</span><span class="sz">1.9 GB</span></li>
-      </ul>
-      <div class="cu-foot"><span>Moved to the Trash, not deleted.</span><span class="btn btn-ink btn-sm cu-go" data-cu-go>Move 23.4 GB to Trash</span></div>
-      <div class="toast" data-toast><span>23.4 GB moved to the Trash</span><b><svg class="ic"><use href="#i-undo"/></svg>Undo</b></div>
+      <p class="priv">No account, no analytics, no crash reports. It only goes online to check for updates and to ask Anthropic for your own Claude plan limits. <a href="/privacy.html">Privacy</a></p>
     </div>
-  </div>
-</section>
-
-<!-- CLAUDE CODE -->
-<section class="ch claude" id="claude" aria-labelledby="cc-title">
-  <div class="wrap">
-    <header class="ch-wide">
-      <p class="label">Claude Code</p>
-      <h2 id="cc-title" class="display-2 reveal">Your Claude Code, <em>fully in view.</em></h2>
-      <p class="body body-l reveal">Vardis finds your Claude Code data on its own. Search every session, see what each project costs at API prices, watch live sessions, keep an eye on plan limits, and let several personal accounts hand off to each other.</p>
-    </header>
-
-    <div class="cc" data-cc>
-      <div class="cc-tabs" role="tablist" aria-label="Claude Code features">
-        <button class="cc-tab" role="tab" id="cct-0" aria-controls="ccp-0" aria-selected="true" data-cc-tab="0"><span class="cc-n">Sessions</span><span class="cc-d">Full-text search and one-click resume</span><i class="cc-prog"></i></button>
-        <button class="cc-tab" role="tab" id="cct-1" aria-controls="ccp-1" aria-selected="false" tabindex="-1" data-cc-tab="1"><span class="cc-n">Usage and cost</span><span class="cc-d">By project, model and account</span><i class="cc-prog"></i></button>
-        <button class="cc-tab" role="tab" id="cct-2" aria-controls="ccp-2" aria-selected="false" tabindex="-1" data-cc-tab="2"><span class="cc-n">Live sessions</span><span class="cc-d">Context, current tool, child processes</span><i class="cc-prog"></i></button>
-        <button class="cc-tab" role="tab" id="cct-3" aria-controls="ccp-3" aria-selected="false" tabindex="-1" data-cc-tab="3"><span class="cc-n">Limits and accounts</span><span class="cc-d">Switch accounts at a threshold</span><i class="cc-prog"></i></button>
-      </div>
-
-      <div class="cc-stage">
-        <div class="cc-panel" role="tabpanel" id="ccp-0" aria-labelledby="cct-0" data-cc-panel="0">
-          <div class="panel-ui" aria-hidden="true">
-            <div class="ss-search"><svg class="ic"><use href="#i-search"/></svg><span data-typed>flaky</span><i class="caret"></i><em>1,284 sessions</em></div>
-            <ul class="ss-list" data-ss>
-              <li data-k="flaky"><b>Fix the flaky checkout test</b><span>storefront, main, 2 hours ago</span><p>…the <mark>flaky</mark> test waits on a timer that the CI runner throttles…</p></li>
-              <li data-k="flaky"><b>Retry policy for the payments client</b><span>api-gateway, Tuesday</span><p>…marked <mark>flaky</mark> in CI twice last week, so we add jitter…</p></li>
-              <li data-k="x"><b>Dark mode for settings</b><span>notes-app, Monday</span><p>…move the colours into tokens first…</p></li>
-              <li data-k="x"><b>Move the image pipeline to AVIF</b><span>blog, 12 October</span><p>…keep WebP as the fallback…</p></li>
-            </ul>
-            <div class="ss-resume" data-resume><code>claude --resume 4f2a9c1e</code><span class="btn btn-sm btn-white">Resume in Terminal</span></div>
-          </div>
-          <p class="panel-cap">Every session is indexed on your Mac. Find what you said months ago, then resume it in your terminal with one click.</p>
-        </div>
-        <div class="cc-panel" role="tabpanel" id="ccp-1" aria-labelledby="cct-1" data-cc-panel="1" hidden>
-          <div class="panel-ui" aria-hidden="true">
-            <div class="us-top"><div><p class="us-k">October so far, all accounts</p><p class="us-v">$<span data-usd>1,284</span></p><p class="us-n">API-equivalent value of your tokens</p></div><div class="us-side"><p><span>Tokens</span><b>2.1B</b></p><p><span>Cache hit</span><b>94%</b></p></div></div>
-            <div class="us-bars" data-usbars></div>
-            <div class="us-rows">
-              <p><span>Opus 5.5</span><i><b class="w1"></b></i><em>$1,032</em></p>
-              <p><span>Sonnet 5.5</span><i><b class="w2"></b></i><em>$231</em></p>
-              <p><span>Haiku 5.5</span><i><b class="w3"></b></i><em>$21</em></p>
-            </div>
-          </div>
-          <p class="panel-cap">Read from Claude Code's own files and priced with bundled API prices. Break it down by project, model or account.</p>
-        </div>
-        <div class="cc-panel" role="tabpanel" id="ccp-2" aria-labelledby="cct-2" data-cc-panel="2" hidden>
-          <div class="panel-ui" aria-hidden="true">
-            <p class="lv-h"><b>3 running</b><span>on the Personal account</span></p>
-            <ul class="lv" data-lv>
-              <li><span class="dot d-run"></span><div class="lv-m"><b>storefront</b><span data-tool>Running tests</span></div><div class="lv-ctx"><i><b data-ctx="58"></b></i><em data-ctxv>58%</em></div><span class="lv-kids" data-kids>node, vitest</span></li>
-              <li><span class="dot d-wait"></span><div class="lv-m"><b>api-gateway</b><span>Waiting for you</span></div><div class="lv-ctx"><i><b data-ctx="31"></b></i><em data-ctxv>31%</em></div><span class="lv-kids">none</span></li>
-              <li><span class="dot d-idle"></span><div class="lv-m"><b>dotfiles</b><span>Idle 12 m</span></div><div class="lv-ctx"><i><b data-ctx="9"></b></i><em data-ctxv>9%</em></div><span class="lv-kids">none</span></li>
-            </ul>
-          </div>
-          <p class="panel-cap">See which sessions are working, which are waiting for you, how full their context is, and what they started.</p>
-        </div>
-        <div class="cc-panel" role="tabpanel" id="ccp-3" aria-labelledby="cct-3" data-cc-panel="3" hidden>
-          <div class="panel-ui" aria-hidden="true">
-            <p class="ac-h">Switch when the 5-hour window reaches <b>90%</b></p>
-            <ul class="ac" data-ac>
-              <li data-acc="0"><span class="av">P</span><div class="ac-m"><b>Personal <span class="act">Active</span></b><i><b data-acbar></b><s class="thr"></s></i></div><em data-acv>62%</em></li>
-              <li data-acc="1"><span class="av">W</span><div class="ac-m"><b>Work <span class="act">Active</span></b><i><b data-acbar></b><s class="thr"></s></i></div><em data-acv>12%</em></li>
-              <li data-acc="2"><span class="av">S</span><div class="ac-m"><b>Side project <span class="act">Active</span></b><i><b data-acbar></b><s class="thr"></s></i></div><em data-acv>4%</em></li>
-            </ul>
-            <p class="ac-note" data-acnote>New sessions start on the active account.</p>
-          </div>
-          <p class="panel-cap">Plan limits for every account. At your threshold Vardis switches, so new sessions start on the next account while running ones finish where they began.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- MORE -->
-<section class="ch more" aria-labelledby="more-title">
-  <div class="wrap">
-    <h2 id="more-title" class="display-3 reveal">And the small things you reach for every day.</h2>
-    <div class="more-grid">
-      <div class="m reveal"><p class="m-vis" aria-hidden="true"><kbd>⌘</kbd><kbd>K</kbd></p><h3>Command palette</h3><p>Jump to any screen, find an app, quit it, resume a session. All from the keyboard.</p></div>
-      <div class="m reveal"><p class="m-vis m-mono" aria-hidden="true">:3000<span>next dev</span></p><h3>Ports and servers</h3><p>Every dev server and database you started, with its port. Find what is holding :3000.</p></div>
-      <div class="m reveal"><p class="m-vis m-mono" aria-hidden="true">postgres<span>312 MB</span></p><h3>Docker</h3><p>Containers, their memory and state, next to everything else on your Mac.</p></div>
-      <div class="m reveal"><p class="m-vis m-mono" aria-hidden="true"><span data-mb="cpu">41%</span><span data-mb="mem">21.4G</span></p><h3>Menu bar items</h3><p>CPU, memory, network or your Claude limit, each as its own menu bar item.</p></div>
-    </div>
-  </div>
-</section>
-
-<!-- FAST -->
-<section class="ch fast" aria-labelledby="fast-title">
-  <div class="wrap">
-    <header class="ch-wide">
-      <p class="label">Fast by design</p>
-      <h2 id="fast-title" class="display-2 reveal">A monitor should never be the thing <em>slowing you down.</em></h2>
-    </header>
-    <dl class="nums">
-      <div class="reveal"><dt><span data-count="35">35</span><small>ms</small></dt><dd>to open the window from the menu bar</dd></div>
-      <div class="reveal"><dt><span data-count="85">85</span><small>ms</small></dt><dd>from launch to the menu bar item</dd></div>
-      <div class="reveal"><dt><span data-count="25">25</span><small>MB</small></dt><dd>of memory when idle</dd></div>
-      <div class="reveal"><dt><span data-count="4">4</span><small>ms</small></dt><dd>to sample about 1,450 processes</dd></div>
-    </dl>
-    <div class="ruler reveal" aria-hidden="true">
-      <div class="ruler-track"><i class="r-bar r-sample"></i><i class="r-bar r-win"></i><i class="r-bar r-launch"></i><span class="r-lab l-sample">Sample every process</span><span class="r-lab l-win">Open the window</span><span class="r-lab l-launch">Launch</span><span class="r-blink">a blink, about 100 ms</span></div>
-      <div class="ruler-scale"><span>0</span><span>25</span><span>50</span><span>75</span><span>100 ms</span></div>
-    </div>
-    <p class="fine">Measured on the developer's Mac with a Release build, so your Mac will differ. Native Swift and SwiftUI, no Electron and no web views. Every number has a budget, and a build that misses one does not ship.</p>
-  </div>
-</section>
-
-<!-- PRIVACY -->
-<section class="ch privacy" id="privacy" aria-labelledby="pv-title">
-  <div class="wrap ch-grid">
-    <header class="ch-head">
-      <p class="label">The promise</p>
-      <h2 id="pv-title" class="display-3">Free forever. <em>Collects nothing.</em></h2>
-      <p class="body">No account, no analytics, no crash reports, no third-party code. Your history, sessions and files stay on your Mac. There is no Vardis server, so there is nowhere for your data to go.</p>
-      <p class="body">It goes online for two things only: the update check in the direct download, which you can turn off, and asking Anthropic for your own plan limits with your own sign-in.</p>
-      <p><a class="link" href="/privacy.html">Read the privacy statement<svg class="ic"><use href="#i-arrow"/></svg></a></p>
-    </header>
-    <div class="ch-body pv reveal" aria-hidden="true">
-      <svg viewBox="0 0 560 400" class="pv-svg">
-        <path class="pv-line ok" d="M280 200 C 380 200, 400 92, 486 86"/>
-        <path class="pv-line ok" d="M280 200 C 380 200, 400 308, 486 314"/>
-        <path class="pv-line no" d="M280 200 C 180 200, 160 80, 74 74"/>
-        <path class="pv-line no" d="M280 200 C 170 200, 140 200, 74 200"/>
-        <path class="pv-line no" d="M280 200 C 180 200, 160 320, 74 326"/>
-        <path class="pv-flow" d="M280 200 C 380 200, 400 92, 486 86"/>
-        <path class="pv-flow f2" d="M280 200 C 380 200, 400 308, 486 314"/>
-        <rect x="214" y="152" width="132" height="96" rx="22" class="pv-mac"/>
-        <text x="280" y="196" class="pv-t1">Your Mac</text>
-        <text x="280" y="218" class="pv-t2">everything stays here</text>
-        <g class="pv-no"><circle cx="74" cy="74" r="14"/><path d="m68 68 12 12M80 68 68 80"/></g>
-        <g class="pv-no"><circle cx="74" cy="200" r="14"/><path d="m68 194 12 12M80 194 68 206"/></g>
-        <g class="pv-no"><circle cx="74" cy="326" r="14"/><path d="m68 320 12 12M80 320 68 332"/></g>
-        <text x="74" y="110" class="pv-l pv-l-no">Analytics</text>
-        <text x="74" y="236" class="pv-l pv-l-no">Crash reports</text>
-        <text x="74" y="362" class="pv-l pv-l-no">Accounts</text>
-        <circle cx="486" cy="86" r="14" class="pv-yes"/><path d="m480 86 4.5 4.5 8-9" class="pv-yes-c"/>
-        <circle cx="486" cy="314" r="14" class="pv-yes"/><path d="m480 314 4.5 4.5 8-9" class="pv-yes-c"/>
-        <text x="486" y="122" class="pv-l">Update check</text>
-        <text x="486" y="140" class="pv-l2">can be turned off</text>
-        <text x="486" y="350" class="pv-l">Your plan limits</text>
-        <text x="486" y="368" class="pv-l2">api.anthropic.com</text>
-      </svg>
-    </div>
-  </div>
-</section>
-
-<!-- EDITIONS -->
-<section class="ch editions" aria-labelledby="ed-title">
-  <div class="wrap ch-grid">
-    <header class="ch-head">
-      <p class="label">Two editions</p>
-      <h2 id="ed-title" class="display-3">Same code. Both free.</h2>
-      <p class="body">The direct download has everything. The Mac App Store edition runs in Apple's sandbox, which cannot see some of what Vardis reads, so a few features are limited there.</p>
-    </header>
-    <div class="ch-body table-wrap reveal">
-      <table class="ed">
-        <thead><tr><th scope="col"><span class="sr-only">Feature</span></th><th scope="col">Direct download</th><th scope="col">Mac App Store</th></tr></thead>
-        <tbody>
-          <tr><th scope="row">Now, Apps, Today, Time Machine</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">Disk Cleanup</th><td>Yes</td><td class="part">Folders you choose</td></tr>
-          <tr><th scope="row">Claude Code sessions and usage</th><td>Found on its own</td><td class="part">After you pick the folder once</td></tr>
-          <tr><th scope="row">Claude plan limits</th><td>Yes</td><td class="no">No</td></tr>
-          <tr><th scope="row">Account switching</th><td>Yes</td><td class="no">No</td></tr>
-          <tr><th scope="row">Ports &amp; Servers, Docker</th><td>Yes</td><td class="no">No</td></tr>
-          <tr><th scope="row">Updates</th><td>Built in</td><td>Through the App Store</td></tr>
-          <tr><th scope="row">Price</th><td>Free</td><td>Free</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</section>
-
-<!-- FAQ -->
-<section class="ch faq" id="faq" aria-labelledby="faq-title">
-  <div class="wrap ch-grid">
-    <header class="ch-head">
-      <p class="label">Questions</p>
-      <h2 id="faq-title" class="display-3">Asked and answered.</h2>
-    </header>
-    <div class="ch-body faq-list">
-      <details><summary>Is it really free?</summary><p>Yes, forever. There is no paid tier, no trial and no account. The code is open source under the MIT License.</p></details>
-      <details><summary>When can I download it?</summary><p>The first release is planned for November 2026. The download button points to the GitHub releases page, where it will appear. You can build it from source today.</p></details>
-      <details><summary>Which Macs does it run on?</summary><p>Any Mac on macOS 15 or later, with Apple silicon or Intel.</p></details>
-      <details><summary>Will it slow my Mac down?</summary><p>It is built not to. On the developer's Mac it uses about 25 MB of memory when idle, and a full sample of about 1,450 processes takes about 4 ms.</p></details>
-      <details><summary>What does it record, and where?</summary><p>Readings of CPU, memory, disk, network and power, grouped by app, in a local database in <code>~/Library/Application Support/Vardis</code>. Older data is thinned out over time. Delete the folder and the history is gone. Nothing is copied anywhere else.</p></details>
-      <details><summary>Do I need Claude Code?</summary><p>No. Everything about your Mac works on its own. The Claude Code screens simply stay empty until you use it.</p></details>
-      <details><summary>Does Disk Cleanup delete files?</summary><p>No. It moves what you select to the Trash, so you can put anything back. Projects you used recently are protected and never offered. Docker images and containers are freed with Docker's own command.</p></details>
-      <details><summary>Is Vardis made by Apple or Anthropic?</summary><p>No. Vardis is an independent open-source project and is not affiliated with Apple or Anthropic.</p></details>
-    </div>
-  </div>
-</section>
-
-<!-- CLOSE -->
-<section class="close" aria-labelledby="close-title">
-  <div class="wrap close-in">
-    <img class="close-icon" src="/assets/img/icon-256.webp" width="120" height="120" alt="" loading="lazy" decoding="async">
-    <h2 id="close-title" class="display">Know your Mac.</h2>
-    <p class="hero-sub">Free, open source and private. Coming November 2026.</p>
-    <div class="hero-act hero-act-c">
-      <a class="btn btn-ink" href="https://github.com/emrekasg/vardis/releases/latest"><svg class="ic"><use href="#i-down"/></svg>Download for Mac</a>
-      <a class="btn btn-line" href="https://github.com/emrekasg/vardis"><svg class="ic"><use href="#i-gh"/></svg>Star on GitHub</a>
-    </div>
-    <p class="fine">macOS 15 or later. Apple silicon and Intel.</p>
-  </div>
-</section>
-
+  </section>
 </main>
-
 <footer class="foot">
   <div class="wrap foot-in">
-    <p class="foot-brand"><img src="/assets/img/icon-128.webp" width="20" height="20" alt="" loading="lazy">Vardis</p>
-    <nav class="foot-links" aria-label="Footer">
-      <a href="/privacy.html">Privacy</a>
-      <a href="https://github.com/emrekasg/vardis">Source code</a>
-      <a href="https://github.com/emrekasg/vardis/issues">Report an issue</a>
-      <a href="https://github.com/emrekasg/vardis/blob/main/LICENSE">MIT License</a>
-      <button class="foot-motion" type="button" data-motion-toggle aria-pressed="false">Pause motion</button>
-    </nav>
-    <p class="foot-legal">An independent project, not affiliated with Apple or Anthropic. Mac and macOS are trademarks of Apple Inc. Claude is a trademark of Anthropic.</p>
+    <span>Vardis is MIT licensed. Not affiliated with Apple or Anthropic.</span>
+    <nav aria-label="Footer"><a href="/privacy.html">Privacy</a><a href="https://github.com/emrekasg/vardis">GitHub</a><a href="https://github.com/emrekasg/vardis/issues">Issues</a></nav>
   </div>
 </footer>
 </body>
