@@ -1,0 +1,5 @@
+// Product name and identifiers. Change the name here and in VardisCore/Brand.swift.
+PRODUCT_NAME = Vardis
+VARDIS_BUNDLE_ID_BASE = app.vardis.Vardis
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
