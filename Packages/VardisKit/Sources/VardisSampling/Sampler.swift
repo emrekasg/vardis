@@ -14,6 +14,7 @@ public actor Sampler {
     private let battery = BatteryCollector()
     private let gpu = GPUCollector()
     private let bootTime = SystemInfo.bootTime
+    private var last: Snapshot?
 
     public init() {
         host = mach_host_self()
@@ -23,7 +24,9 @@ public actor Sampler {
     }
 
     /// Collects one Snapshot. The first call primes delta counters; rates/CPU may be 0 on that call.
-    public func sample() -> Snapshot {
+    /// `background`: nobody is looking, so slow-changing, costly readings (free disk space asks the
+    /// cache-delete service and costs more than the whole process walk) refresh only every 10 minutes.
+    public func sample(background: Bool = false) -> Snapshot {
         let now = SystemInfo.uptimeNanos()
         let cpuSample = cpu.sample()
         let memorySample = memory.sample()
@@ -35,11 +38,11 @@ public actor Sampler {
         for g in grouper.activeGroups { apps.append(g.makeSample()) }
 
         let date = Date()
-        return Snapshot(
+        let snapshot = Snapshot(
             timestamp: date,
             cpu: cpuSample,
             memory: memorySample,
-            disk: disk.sample(now: now),
+            disk: disk.sample(now: now, capacityMaxAge: background ? 600_000_000_000 : nil),
             network: network.sample(now: now),
             battery: battery.sample(now: now),
             gpu: gpu.sample(),
@@ -47,6 +50,40 @@ public actor Sampler {
             processCount: processes.listedCount,
             uptime: max(0, date.timeIntervalSince1970 - bootTime)
         )
+        last = snapshot
+        return snapshot
+    }
+
+    /// A cheap Snapshot for menu bar ticks while no window is open: CPU, memory and network are fresh;
+    /// apps, disk, battery and GPU are carried over from the last full `sample()`. No per-process walk.
+    public func sampleSystem() -> Snapshot {
+        let now = SystemInfo.uptimeNanos()
+        let cpuSample = cpu.sample()
+        let memorySample = memory.sample()
+        let networkSample = network.sample(now: now)
+        let date = Date()
+        guard var s = last else {
+            return Snapshot(timestamp: date, cpu: cpuSample, memory: memorySample,
+                            disk: DiskSample(totalBytes: 0, freeBytes: 0, readBytesPerSecond: 0, writeBytesPerSecond: 0),
+                            network: networkSample, battery: nil, gpu: nil, apps: [], processCount: 0,
+                            uptime: max(0, date.timeIntervalSince1970 - bootTime))
+        }
+        s.timestamp = date
+        s.cpu = cpuSample
+        s.memory = memorySample
+        s.network = networkSample
+        s.uptime = max(0, date.timeIntervalSince1970 - bootTime)
+        return s
+    }
+
+    /// The app (as `AppGrouper` sees it) each pid belonged to in the last full sample.
+    public func apps(forPIDs pids: [Int32]) -> [Int32: AppIdentity] {
+        var out = [Int32: AppIdentity]()
+        for pid in pids {
+            guard let g = processes.byPID[pid]?.group else { continue }
+            out[pid] = AppIdentity(id: g.id, name: g.name, bundleURL: g.bundleURL)
+        }
+        return out
     }
 
     /// Details for one app (processes in it), from the last sample. Sorted by memory, descending.
@@ -54,4 +91,11 @@ public actor Sampler {
         guard let group = grouper.group(id: appID) else { return [] }
         return group.members.map(\.sample).sorted { $0.memory > $1.memory }
     }
+}
+
+/// Who owns a process, in the same terms as `AppSample`.
+public struct AppIdentity: Sendable, Equatable {
+    public var id: String
+    public var name: String
+    public var bundleURL: URL?
 }

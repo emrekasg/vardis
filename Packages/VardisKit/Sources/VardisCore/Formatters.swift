@@ -40,12 +40,24 @@ public enum Fmt {
     /// 4_100_000 -> "4.1M", 412_000 -> "412k".
     public static func tokens(_ n: Int) -> String {
         let d = Double(n)
+        if d >= 1_000_000_000 { return String(format: "%.1fB", d / 1_000_000_000) }
         if d >= 1_000_000 { return String(format: "%.1fM", d / 1_000_000) }
         if d >= 1000 { return "\(Int((d / 1000).rounded()))k" }
         return "\(n)"
     }
 
+    /// Always "$1,284" / "$6.40", whatever the user's locale, so dollar amounts never read like decimals.
     public static func usd(_ v: Double) -> String {
-        v >= 100 ? "$" + Int(v.rounded()).formatted() : String(format: "$%.2f", v)
+        v >= 100 ? "$" + grouped(Int(v.rounded())) : String(format: "$%.2f", v)
+    }
+
+    public static func grouped(_ n: Int) -> String {
+        let digits = String(abs(n))
+        var out = ""
+        for (i, c) in digits.enumerated() {
+            if i > 0, (digits.count - i) % 3 == 0 { out.append(",") }
+            out.append(c)
+        }
+        return n < 0 ? "-" + out : out
     }
 }

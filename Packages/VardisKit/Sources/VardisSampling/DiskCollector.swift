@@ -9,14 +9,16 @@ final class DiskCollector {
     private var lastNanos: UInt64 = 0
     private var capacity: (total: UInt64, free: UInt64) = (0, 0)
     private var capacityReadAt: UInt64 = 0
-    /// Free space changes slowly and the "important usage" query is not cheap, so refresh it at most this often.
-    private let capacityInterval: UInt64 = 10_000_000_000
+    /// Free space changes slowly and the "important usage" query is the most expensive call in a sample
+    /// (it asks the cache-delete service), so refresh it at most once a minute.
+    private let capacityInterval: UInt64 = 60_000_000_000
     private let readKey = "Bytes (Read)" as CFString
     private let writeKey = "Bytes (Write)" as CFString
     private let statisticsKey = "Statistics" as CFString
 
-    func sample(now: UInt64) -> DiskSample {
-        if capacityReadAt == 0 || now &- capacityReadAt >= capacityInterval {
+    /// `capacityMaxAge` overrides the refresh interval (nanoseconds); background samples pass a long one.
+    func sample(now: UInt64, capacityMaxAge: UInt64? = nil) -> DiskSample {
+        if capacityReadAt == 0 || now &- capacityReadAt >= (capacityMaxAge ?? capacityInterval) {
             capacity = Self.readCapacity()
             capacityReadAt = now
         }

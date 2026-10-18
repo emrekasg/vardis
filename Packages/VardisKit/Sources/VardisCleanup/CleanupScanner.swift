@@ -23,10 +23,59 @@ public actor CleanupScanner {
     }
 
     public func scan() async -> [CleanupGroup] {
+        await fullScan().groups
+    }
+
+    /// Finds and measures everything. Runs at utility priority.
+    public func fullScan() async -> ScanResult {
         let config = config, simctl = simctl, docker = docker
         return await Task.detached(priority: .utility) {
-            await Self.runScan(config: config, simctl: simctl, docker: docker, now: Date())
+            await Self.runScan(config: config, simctl: simctl, docker: docker, now: Date(), previous: nil, changes: [])
         }.value
+    }
+
+    /// Updates `previous` after file system changes: only categories whose folders changed are
+    /// looked at again, and inside an item only the pieces under a changed path are re-measured.
+    /// Docker and simulator lists are not re-queried (they need external tools); their items are
+    /// re-measured or dropped when their folders change.
+    public func refresh(_ previous: ScanResult, changes: [ChangedPath]) async -> ScanResult {
+        let config = config, simctl = simctl, docker = docker
+        return await Task.detached(priority: .utility) {
+            await Self.runScan(config: config, simctl: simctl, docker: docker, now: Date(), previous: previous, changes: changes)
+        }.value
+    }
+
+    /// Folders to watch with FSEvents. Only existing folders are returned.
+    public static func watchedRoots(_ config: CleanupConfig) -> [String] {
+        var roots: [String] = []
+        for c in config.enabled { roots += categoryRoots(c, config: config).map(\.path) }
+        let fm = FileManager()
+        var seen = Set<String>()
+        return roots.filter { fm.fileExists(atPath: $0) && seen.insert($0).inserted && isAllowed($0, config) }
+    }
+
+    static func categoryRoots(_ c: CleanupCategory, config: CleanupConfig) -> [URL] {
+        let home = config.home
+        switch c {
+        case .xcode: return [home.appendingPathComponent("Library/Developer/Xcode")]
+        case .simulators: return [home.appendingPathComponent("Library/Developer/CoreSimulator/Devices")]
+        case .nodeModules: return config.projectRoots
+        case .packageCaches: return packageCacheRules.map { home.appendingPathComponent($0.path) }
+        case .largeOldFiles: return ["Desktop", "Downloads", "Movies"].map { home.appendingPathComponent($0) }
+        case .docker: return []
+        }
+    }
+
+    static func isAllowed(_ path: String, _ config: CleanupConfig) -> Bool {
+        guard let allowed = config.allowedRoots else { return true }
+        return allowed.contains { a in
+            let ap = canonicalPath(a)
+            return path == ap || path.hasPrefix(ap + "/")
+        }
+    }
+
+    static func touches(_ root: String, _ changes: [ChangedPath]) -> Bool {
+        changes.contains { $0.path == root || $0.path.hasPrefix(root + "/") || root.hasPrefix($0.path + "/") }
     }
 
     public func trash(_ items: [CleanupItem]) async -> TrashResult {
@@ -51,6 +100,7 @@ public actor CleanupScanner {
             }
             if ok {
                 result.moved += 1
+                result.movedIDs.append(item.id)
                 result.bytes += item.sizeBytes
             }
         }
@@ -85,79 +135,120 @@ public actor CleanupScanner {
         var sizeURL: URL?
     }
 
-    static func runScan(config: CleanupConfig, simctl: any SimctlRunner, docker: any DockerRunner, now: Date) async -> [CleanupGroup] {
-        let home = config.home
-        let day: TimeInterval = 86_400
-        var candidates: [Candidate] = []
+    static func runScan(config: CleanupConfig, simctl: any SimctlRunner, docker: any DockerRunner, now: Date,
+                        previous: ScanResult?, changes: [ChangedPath]) async -> ScanResult {
         let enabled = config.enabled
+        var candidates: [Candidate] = []
 
-        // The external tools (docker df takes seconds) run while the file system is walked.
-        async let simItems = enabled.contains(.simulators) ? simulators(home: home, runner: simctl) : []
-        async let dockerList = enabled.contains(.docker) ? dockerItems(home: home, runner: docker) : []
-
-        if enabled.contains(.xcode) { candidates += xcode(home: home, now: now) }
-        if enabled.contains(.nodeModules) { candidates += nodeModules(config: config, now: now) }
-        if enabled.contains(.packageCaches) { candidates += packageCaches(home: home) }
-        if enabled.contains(.largeOldFiles) {
-            let cutoff = now.addingTimeInterval(-Double(config.largeFileMinAgeDays) * day)
-            for name in ["Desktop", "Downloads", "Movies"] {
-                for f in DiskUsage.largeOldFiles(in: home.appendingPathComponent(name), minBytes: config.largeFileMinBytes, olderThan: cutoff) {
-                    candidates.append(Candidate(item: CleanupItem(
-                        id: f.url.path, category: .largeOldFiles, title: f.url.lastPathComponent, detail: name,
-                        urls: [f.url], sizeBytes: f.size, lastUsed: f.modified, safety: .reviewFirst, selectedByDefault: false
-                    ), sizeURL: nil))
-                }
+        // On a refresh, a category is looked at again only when one of its folders changed.
+        let previousItems = previous?.items ?? []
+        func revisit(_ c: CleanupCategory) -> Bool {
+            guard enabled.contains(c) else { return false }
+            guard previous != nil else { return true }
+            return categoryRoots(c, config: config).contains { touches(canonicalPath($0), changes) }
+        }
+        func kept(_ c: CleanupCategory) -> [Candidate] {
+            previousItems.filter { $0.category == c }.compactMap { item in
+                guard let u = item.urls.first else { return Candidate(item: item, sizeURL: nil) }
+                guard FileManager().fileExists(atPath: u.path) else { return nil }
+                return Candidate(item: item, sizeURL: c == .largeOldFiles ? nil : u)
             }
         }
 
-        candidates += await simItems
-        candidates += await dockerList
+        // The external tools (docker df takes seconds) run while the file system is walked.
+        let fresh = previous == nil
+        async let simItems = enabled.contains(.simulators) && fresh ? simulators(home: config.home, runner: simctl) : []
+        async let dockerList = enabled.contains(.docker) && fresh && config.allowedRoots == nil ? dockerItems(home: config.home, runner: docker) : []
 
-        // Size in parallel, at most 4 directories in flight.
-        let sizes = await sizeAll(candidates.map(\.sizeURL))
-        var items: [CleanupItem] = []
-        for (i, c) in candidates.enumerated() {
-            var item = c.item
-            if let s = sizes[i] { item.sizeBytes = s }
-            if item.sizeBytes > 0 { items.append(item) }
+        for c in [CleanupCategory.xcode, .nodeModules, .packageCaches, .largeOldFiles] where enabled.contains(c) {
+            if revisit(c) {
+                switch c {
+                case .xcode: candidates += xcode(home: config.home, now: now)
+                case .nodeModules: candidates += nodeModules(config: config, now: now)
+                case .packageCaches: candidates += packageCaches(home: config.home)
+                case .largeOldFiles: candidates += largeOldFiles(config: config, now: now)
+                default: break
+                }
+            } else {
+                candidates += kept(c)
+            }
         }
+        if fresh {
+            candidates += await simItems
+            candidates += await dockerList
+        } else {
+            if enabled.contains(.simulators) { candidates += kept(.simulators) }
+            if enabled.contains(.docker) { candidates += kept(.docker) }
+        }
+        candidates = candidates.filter { c in c.item.urls.allSatisfy { isAllowed(canonicalPath($0), config) } && (config.allowedRoots == nil || !c.item.urls.isEmpty) }
 
         // Dedup by id (overlapping project roots).
-        var seen = Set<String>()
-        items = items.filter { seen.insert($0.id).inserted }
+        var seenIDs = Set<String>()
+        candidates = candidates.filter { seenIDs.insert($0.item.id).inserted }
 
-        return CleanupCategory.allCases.compactMap { cat in
+        let (sized, units, measured) = size(candidates, previous: previous, changes: changes, now: now)
+        let items = sized.filter { $0.sizeBytes > 0 }
+        let groups = CleanupCategory.allCases.compactMap { cat in
             let list = items.filter { $0.category == cat }.sorted { $0.sizeBytes > $1.sizeBytes }
             return list.isEmpty ? nil : CleanupGroup(category: cat, items: list)
         }
+        let liveIDs = Set(items.map(\.id))
+        return ScanResult(groups: groups, units: units.filter { liveIDs.contains($0.key) }, scannedAt: now, measuredUnits: measured)
     }
 
-    /// Each directory is split into its direct children so one huge cache (go-build: ~460k files)
-    /// spreads over all workers instead of pinning one; metadata reads scale with parallelism.
-    private static func sizeAll(_ urls: [URL?]) async -> [UInt64?] {
-        var out = [UInt64?](repeating: nil, count: urls.count)
-        var work: [(Int, URL)] = []
-        for (i, u) in urls.enumerated() {
-            guard let u else { continue }
-            out[i] = 0
-            if DiskUsage.isRealDirectory(u) {
-                let children = (try? FileManager().contentsOfDirectory(at: u, includingPropertiesForKeys: [.isSymbolicLinkKey], options: [])) ?? []
-                work += children.map { (i, $0) }
-            } else {
-                work.append((i, u))
+    /// Sizes every candidate. Each folder is split into units (see `SizeUnits.partition`) and all
+    /// units of all items are measured together in parallel, so one huge cache spreads over every
+    /// core. On a refresh, units nothing changed under keep their previous size.
+    private static func size(_ candidates: [Candidate], previous: ScanResult?, changes: [ChangedPath], now: Date)
+        -> (items: [CleanupItem], units: [String: [SizeUnit]], measured: Int) {
+        let previousByID = Dictionary((previous?.items ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var plans: [[SizeUnit]] = Array(repeating: [], count: candidates.count)
+        var todo: [(Int, Int)] = []
+        var items = candidates.map(\.item)
+        for (i, c) in candidates.enumerated() {
+            guard let url = c.sizeURL else { continue }
+            let root = canonicalPath(url)
+            let prevUnits = previous?.units[c.item.id]
+            if let prevUnits, let prevItem = previousByID[c.item.id], !touches(root, changes) {
+                plans[i] = prevUnits
+                items[i].sizeBytes = prevItem.sizeBytes
+                items[i].scannedAt = prevItem.scannedAt
+                continue
             }
+            let known = Dictionary((prevUnits ?? []).map { ($0.key, $0.bytes) }, uniquingKeysWith: { a, _ in a })
+            var units = SizeUnits.partition(root: root)
+            for (j, u) in units.enumerated() where u.bytes == nil {
+                if let k = known[u.key] ?? nil, !SizeUnits.isDirty(u, changes) { units[j].bytes = k } else {
+                    units[j].bytes = k(u.key, known)
+                    todo.append((i, j))
+                }
+            }
+            plans[i] = units
+            items[i].scannedAt = now
         }
-        await withTaskGroup(of: (Int, UInt64).self) { group in
-            var next = 0
-            func add() {
-                let (i, u) = work[next]
-                next += 1
-                group.addTask(priority: .utility) { (i, DiskUsage.allocatedSize(of: u)) }
-            }
-            while next < min(4, work.count) { add() }
-            while let (i, s) = await group.next() {
-                out[i] = (out[i] ?? 0) + s
-                if next < work.count { add() }
+        let measured = SizeUnits.measure(todo.map { plans[$0.0][$0.1] })
+        for (k, (i, j)) in todo.enumerated() { plans[i][j].bytes = measured[k] }
+        var unitsByID: [String: [SizeUnit]] = [:]
+        for (i, c) in candidates.enumerated() where c.sizeURL != nil {
+            items[i].sizeBytes = plans[i].reduce(0) { $0 + ($1.bytes ?? 0) }
+            unitsByID[c.item.id] = plans[i]
+        }
+        for i in items.indices where items[i].scannedAt == nil { items[i].scannedAt = now }
+        return (items, unitsByID, todo.count)
+    }
+
+    /// Previous size as an ordering hint for `measure` (largest first).
+    private static func k(_ key: String, _ known: [String: UInt64?]) -> UInt64? { known[key] ?? nil }
+
+    private static func largeOldFiles(config: CleanupConfig, now: Date) -> [Candidate] {
+        let cutoff = now.addingTimeInterval(-Double(config.largeFileMinAgeDays) * 86_400)
+        var out: [Candidate] = []
+        for name in ["Desktop", "Downloads", "Movies"] {
+            for f in DiskUsage.largeOldFiles(in: config.home.appendingPathComponent(name), minBytes: config.largeFileMinBytes, olderThan: cutoff) {
+                out.append(Candidate(item: CleanupItem(
+                    id: f.url.path, category: .largeOldFiles, title: f.url.lastPathComponent, detail: name,
+                    urls: [f.url], sizeBytes: f.size, lastUsed: f.modified, safety: .reviewFirst, selectedByDefault: false
+                ), sizeURL: nil))
             }
         }
         return out

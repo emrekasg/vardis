@@ -1,4 +1,5 @@
 import AppKit
+import VardisCore
 import os
 
 @main
@@ -11,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
     private var aux: AuxWindows?
     private var hotKey: GlobalHotKey?
+    private var lastStatusTitles = ""
     static let signposter = OSSignposter(subsystem: "app.vardis", category: "launch")
 
     static func main() {
@@ -25,33 +27,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state = Self.signposter.beginInterval("launch")
         Pref.registerDefaults()
         Appearance.apply(UserDefaults.standard.string(forKey: Pref.appearance) ?? "light")
-        let wc = MainWindowController(live: live, nav: nav, models: models)
-        windowController = wc
+        // Status items first: they are what the user sees at launch. The main window is built on the
+        // next run loop turn (or synchronously on the first open, if that comes sooner).
         aux = AuxWindows(live: live)
-        statusBar = StatusBarController(live: live) { [weak wc] screen in wc?.show(screen) }
-        live.onEveryTick { [weak self] s in self?.statusBar?.update(s) }
+        statusBar = StatusBarController(live: live) { [weak self] screen in self?.mainWindow().show(screen) }
+        live.onEveryTick { [weak self] s in
+            // Redrawing a status item costs more than the sample behind it; skip ticks that change nothing visible.
+            guard let self else { return }
+            let titles = Fmt.percent(s.cpu.total) + "|" + Fmt.bytes(s.memory.used)
+            guard titles != self.lastStatusTitles else { return }
+            self.lastStatusTitles = titles
+            self.statusBar?.update(s)
+        }
         live.start()
         models.start(live: live)
-        hotKey = GlobalHotKey { [weak wc] in wc?.show() }
-        NSApp.mainMenu = makeMenu()
+        hotKey = GlobalHotKey { [weak self] in self?.mainWindow().show() }
         NotificationCenter.default.addObserver(forName: .vardisShowOnboarding, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.aux?.showOnboarding { [weak wc] in wc?.show(.now) } }
+            MainActor.assumeIsolated { self?.aux?.showOnboarding { [weak self] in self?.mainWindow().show(.now) } }
         }
         Self.signposter.endInterval("launch", state)
         LaunchTiming.finished()
         if CommandLine.arguments.contains("--print-launch") { FileHandle.standardError.write(Data(String(format: "launch_ms=%.1f\n", LaunchTiming.milliseconds ?? -1).utf8)) }
 
-        if CommandLine.arguments.contains("--snapshot") {
-            wc.snapshotIfRequested()
-        } else if !UserDefaults.standard.bool(forKey: Pref.onboardingDone) {
-            aux?.showOnboarding { [weak wc] in wc?.show(.now) }
-        } else if CommandLine.arguments.contains("--show") {
-            wc.show()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            NSApp.mainMenu = self.makeMenu()
+            let wc = self.mainWindow()
+            if CommandLine.arguments.contains("--snapshot") {
+                wc.snapshotIfRequested()
+            } else if !UserDefaults.standard.bool(forKey: Pref.onboardingDone) {
+                self.aux?.showOnboarding { [weak self] in self?.mainWindow().show(.now) }
+            } else if CommandLine.arguments.contains("--show") {
+                wc.show()
+            }
         }
     }
 
+    /// The main window, built once. Normally prebuilt right after launch so opening it only orders it front.
+    private func mainWindow() -> MainWindowController {
+        if let windowController { return windowController }
+        let state = Self.signposter.beginInterval("build window")
+        let wc = MainWindowController(live: live, nav: nav, models: models)
+        Self.signposter.endInterval("build window", state)
+        windowController = wc
+        return wc
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        windowController?.show()
+        mainWindow().show()
         return true
     }
 
@@ -102,8 +125,13 @@ final class AppModels {
     let history = HistoryModel()
 
     func start(live: LiveModel) {
-        claude.start()
-        cleanup.start()
-        history.start()
+        // VARDIS_DISABLE=claude,cleanup,history turns models off, for measuring what each one costs.
+        let off = Set((ProcessInfo.processInfo.environment["VARDIS_DISABLE"] ?? "").split(separator: ",").map(String.init))
+        if !off.contains("claude") {
+            claude.start()
+            ClaudeStatusItem.install(model: claude)
+        }
+        if !off.contains("cleanup") { cleanup.start() }
+        if !off.contains("history") { history.start(live: live) }
     }
 }

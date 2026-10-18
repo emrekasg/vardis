@@ -7,6 +7,8 @@ public struct ParseResult: Sendable {
     public var bytesRead: Int
     public var lineCount: Int
     public var malformedLines: Int
+    /// File byte range of the line each event came from, parallel to `events`.
+    public var lineRanges: [Range<UInt64>] = []
 }
 
 /// Reads Claude Code `.jsonl` transcripts incrementally.
@@ -29,7 +31,7 @@ public enum TranscriptParser {
             result.bytesRead += chunk.count
             var buffer: Data
             if carry.isEmpty { buffer = chunk } else { carry.append(chunk); buffer = carry }
-            let consumed = parseLines(buffer, decoder: decoder, into: &result)
+            let consumed = parseLines(buffer, fileOffset: result.offset, decoder: decoder, into: &result)
             result.offset += UInt64(consumed)
             carry = consumed < buffer.count ? Data(buffer[(buffer.startIndex + consumed)...]) : Data()
             if chunk.count < chunkSize { break }
@@ -40,7 +42,7 @@ public enum TranscriptParser {
     /// Parses complete lines of `data`. Returns the events and the number of bytes consumed.
     public static func parse(data: Data) -> (events: [TranscriptEvent], consumed: Int) {
         var r = ParseResult(events: [], offset: 0, bytesRead: data.count, lineCount: 0, malformedLines: 0)
-        let consumed = parseLines(data, decoder: JSONDecoder(), into: &r)
+        let consumed = parseLines(data, fileOffset: 0, decoder: JSONDecoder(), into: &r)
         return (r.events, consumed)
     }
 
@@ -64,7 +66,13 @@ public enum TranscriptParser {
 
     // MARK: - Lines
 
-    private static func parseLines(_ data: Data, decoder: JSONDecoder, into r: inout ParseResult) -> Int {
+    /// Decodes one transcript line (for example one read back by its stored byte range).
+    public static func event(line: Data) -> TranscriptEvent? {
+        guard let raw = try? JSONDecoder().decode(RawLine.self, from: line) else { return nil }
+        return event(from: raw)
+    }
+
+    private static func parseLines(_ data: Data, fileOffset: UInt64, decoder: JSONDecoder, into r: inout ParseResult) -> Int {
         var consumed = 0
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.baseAddress else { return }
@@ -79,7 +87,10 @@ public enum TranscriptParser {
                     if !mayBeRelevant(base + start, end - start) {
                         // attachment, mode, file-history, queue-operation, ...: skipped without decoding.
                     } else if let raw = try? decoder.decode(RawLine.self, from: line) {
-                        if let e = event(from: raw) { r.events.append(e) }
+                        if let e = event(from: raw) {
+                            r.events.append(e)
+                            r.lineRanges.append((fileOffset + UInt64(start))..<(fileOffset + UInt64(end)))
+                        }
                     } else {
                         r.malformedLines += 1
                     }

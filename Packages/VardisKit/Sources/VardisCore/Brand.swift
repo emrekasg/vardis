@@ -16,13 +16,9 @@ public enum Edition: Sendable {
     case direct
     case appStore
 
-    public static var current: Edition {
-        #if APPSTORE
-        return .appStore
-        #else
-        return .direct
-        #endif
-    }
+    /// Decided at runtime: the App Store build is the sandboxed one. A compile flag would not reach
+    /// this package, because SwiftPM targets do not see the app target's conditions.
+    public static let current: Edition = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil ? .appStore : .direct
 
     public enum Capability: Sendable {
         case systemProcessHelper

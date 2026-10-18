@@ -50,6 +50,14 @@ public struct ProjectUsage: Sendable, Equatable {
     public var costUSD: Double
 }
 
+public struct HomeUsage: Sendable, Equatable {
+    /// `ClaudeHome.id`.
+    public var home: String
+    public var sessions: Int
+    public var tokens: TokenUsage
+    public var costUSD: Double
+}
+
 public struct ModelUsage: Sendable, Equatable {
     public var model: String
     public var messages: Int

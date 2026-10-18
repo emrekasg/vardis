@@ -3,6 +3,11 @@ import VardisCore
 
 public enum Metric: String, CaseIterable, Sendable, Codable {
     case cpu, memoryUsed, swap, diskRead, diskWrite, netIn, netOut, battery, gpu
+    /// Added in schema 2.
+    case pressure, compressed
+
+    /// Columns created by schema 1; later metrics are added by `ALTER TABLE`.
+    static let schema1: [Metric] = [.cpu, .memoryUsed, .swap, .diskRead, .diskWrite, .netIn, .netOut, .battery, .gpu]
 
     /// Column prefix in `history_points`. Fixed strings only, never user input.
     var column: String {
@@ -16,6 +21,17 @@ public enum Metric: String, CaseIterable, Sendable, Codable {
         case .netOut: "net_out"
         case .battery: "battery"
         case .gpu: "gpu"
+        case .pressure: "pressure"
+        case .compressed: "compressed"
+        }
+    }
+
+    /// Memory pressure as a number: normal 0, warning 0.5, critical 1.
+    public static func pressureValue(_ p: MemoryPressure) -> Double {
+        switch p {
+        case .normal: 0
+        case .warning: 0.5
+        case .critical: 1
         }
     }
 
@@ -31,6 +47,8 @@ public enum Metric: String, CaseIterable, Sendable, Codable {
         case .netOut: s.network.sentBytesPerSecond
         case .battery: s.battery?.charge
         case .gpu: s.gpu?.utilization
+        case .pressure: Metric.pressureValue(s.memory.pressure)
+        case .compressed: Double(s.memory.compressed)
         }
     }
 }
@@ -56,14 +74,17 @@ public struct AppPoint: Sendable, Equatable {
     public var cpu: Double
     public var memory: UInt64
     public var energy: Double
+    /// Bytes per second written to disk, averaged over the bucket (schema 2).
+    public var diskWrite: Double
 
-    public init(timestamp: Date, appID: String, name: String, cpu: Double, memory: UInt64, energy: Double) {
+    public init(timestamp: Date, appID: String, name: String, cpu: Double, memory: UInt64, energy: Double, diskWrite: Double = 0) {
         self.timestamp = timestamp
         self.appID = appID
         self.name = name
         self.cpu = cpu
         self.memory = memory
         self.energy = energy
+        self.diskWrite = diskWrite
     }
 }
 
@@ -92,9 +113,10 @@ public enum HistoryTier: Int64, CaseIterable, Sendable {
 }
 
 /// Tiered history: 1 s (1 h) -> 10 s (24 h) -> 1 min (30 d) -> 10 min (retention).
-/// Each tier keeps avg + max per metric, and the top 10 apps by CPU and by memory per point.
+/// Each tier keeps avg + max per metric, and the top 10 apps by CPU, by memory and by disk writes per point.
+/// Notable events (launches, pressure changes, kept awake, ...) live in `history_events`.
 public actor HistoryStore {
-    public static let schemaVersion: Int64 = 1
+    public static let schemaVersion: Int64 = 2
     static let appsPerRanking = 10
 
     private let db: Database
@@ -116,7 +138,7 @@ public actor HistoryStore {
         guard current < schemaVersion else { return }
         try db.transaction {
             if current < 1 {
-                let metricCols = Metric.allCases.map { "\($0.column)_avg REAL, \($0.column)_max REAL" }.joined(separator: ", ")
+                let metricCols = Metric.schema1.map { "\($0.column)_avg REAL, \($0.column)_max REAL" }.joined(separator: ", ")
                 try db.execute("""
                 CREATE TABLE history_points(
                     tier INTEGER NOT NULL, ts INTEGER NOT NULL, n INTEGER NOT NULL, \(metricCols),
@@ -125,6 +147,18 @@ public actor HistoryStore {
                     tier INTEGER NOT NULL, ts INTEGER NOT NULL, app_id TEXT NOT NULL, name TEXT NOT NULL,
                     cpu REAL NOT NULL, memory REAL NOT NULL, energy REAL NOT NULL,
                     PRIMARY KEY(tier, ts, app_id)) WITHOUT ROWID;
+                """)
+            }
+            if current < 2 {
+                for m in Metric.allCases where !Metric.schema1.contains(m) {
+                    try db.execute("ALTER TABLE history_points ADD COLUMN \(m.column)_avg REAL")
+                    try db.execute("ALTER TABLE history_points ADD COLUMN \(m.column)_max REAL")
+                }
+                try db.execute("""
+                ALTER TABLE history_apps ADD COLUMN disk_w REAL NOT NULL DEFAULT 0;
+                CREATE TABLE history_events(
+                    id INTEGER PRIMARY KEY, ts REAL NOT NULL, kind TEXT NOT NULL, app TEXT, detail TEXT NOT NULL, value REAL);
+                CREATE INDEX history_events_ts ON history_events(ts);
                 """)
             }
             try db.prepare("INSERT OR REPLACE INTO schema_version(component, version) VALUES('history', ?1)").run([.int(schemaVersion)])
@@ -153,19 +187,20 @@ public actor HistoryStore {
         try db.transaction {
             try db.prepare(Self.insertPointSQL).run(values)
             try db.prepare("DELETE FROM history_apps WHERE tier = 0 AND ts = ?1").run([.int(ts)])
-            let ins = try db.prepare("INSERT OR REPLACE INTO history_apps(tier, ts, app_id, name, cpu, memory, energy) VALUES(0, ?1, ?2, ?3, ?4, ?5, ?6)")
+            let ins = try db.prepare("INSERT OR REPLACE INTO history_apps(tier, ts, app_id, name, cpu, memory, energy, disk_w) VALUES(0, ?1, ?2, ?3, ?4, ?5, ?6, ?7)")
             for a in apps {
-                try ins.run([.int(ts), .text(a.id), .text(a.name), .double(a.cpu), .double(Double(a.memory)), .double(a.energyWatts)])
+                try ins.run([.int(ts), .text(a.id), .text(a.name), .double(a.cpu), .double(Double(a.memory)), .double(a.energyWatts), .double(a.diskWriteBytesPerSecond)])
             }
         }
     }
 
-    /// Union of the top N by CPU and the top N by memory.
+    /// Union of the top N by CPU, the top N by memory and the top N apps that wrote to disk.
     static func topApps(_ apps: [AppSample]) -> [AppSample] {
         let byCPU = apps.sorted { $0.cpu > $1.cpu }.prefix(appsPerRanking)
         let byMem = apps.sorted { $0.memory > $1.memory }.prefix(appsPerRanking)
+        let byDisk = apps.filter { $0.diskWriteBytesPerSecond > 0 }.sorted { $0.diskWriteBytesPerSecond > $1.diskWriteBytesPerSecond }.prefix(appsPerRanking)
         var seen = Set<String>()
-        return (byCPU + byMem).filter { seen.insert($0.id).inserted }
+        return (byCPU + byMem + byDisk).filter { seen.insert($0.id).inserted }
     }
 
     // MARK: Read
@@ -204,19 +239,105 @@ public actor HistoryStore {
         return best?.0 ?? .raw
     }
 
-    /// Top apps by CPU at the finest tier point at or just before `at`.
-    public func topApps(at: Date, limit: Int) throws -> [AppPoint] {
+    public enum AppOrder: Sendable { case cpu, memory }
+
+    /// Top apps at the finest tier point at or just before `at`, by CPU (default) or memory.
+    public func topApps(at: Date, limit: Int, by order: AppOrder = .cpu) throws -> [AppPoint] {
         let t = Int64(at.timeIntervalSince1970.rounded(.down))
         let find = try db.prepare("SELECT max(ts) FROM history_apps WHERE tier = ?1 AND ts <= ?2 AND ts > ?3")
         for tier in HistoryTier.allCases {
             guard let ts = try find.all([.int(tier.rawValue), .int(t), .int(t - 2 * tier.width)], { $0.isNull(0) ? nil : $0.int(0) }).first ?? nil else { continue }
-            return try db.prepare("SELECT ts, app_id, name, cpu, memory, energy FROM history_apps WHERE tier = ?1 AND ts = ?2 ORDER BY cpu DESC, memory DESC LIMIT ?3")
-                .all([.int(tier.rawValue), .int(ts), .int(Int64(max(0, limit)))]) {
-                    AppPoint(timestamp: Date(timeIntervalSince1970: TimeInterval($0.int(0))), appID: $0.text(1) ?? "", name: $0.text(2) ?? "",
-                             cpu: $0.double(3), memory: UInt64(max(0, $0.double(4))), energy: $0.double(5))
-                }
+            let orderBy = order == .cpu ? "cpu DESC, memory DESC" : "memory DESC, cpu DESC"
+            return try db.prepare("SELECT ts, app_id, name, cpu, memory, energy, disk_w FROM history_apps WHERE tier = ?1 AND ts = ?2 ORDER BY \(orderBy) LIMIT ?3")
+                .all([.int(tier.rawValue), .int(ts), .int(Int64(max(0, limit)))], Self.appPoint)
         }
         return []
+    }
+
+    private static func appPoint(_ r: Row) -> AppPoint {
+        AppPoint(timestamp: Date(timeIntervalSince1970: TimeInterval(r.int(0))), appID: r.text(1) ?? "", name: r.text(2) ?? "",
+                 cpu: r.double(3), memory: UInt64(max(0, r.double(4))), energy: r.double(5), diskWrite: r.double(6))
+    }
+
+    /// Non-overlapping (tier, from, to) segments covering `lo...hi`: the tier that reaches back to
+    /// `lo`, then newer rows from finer tiers that are not compacted yet. Same rule as `series`.
+    private func segments(_ lo: Int64, _ hi: Int64) throws -> [(HistoryTier, Int64, Int64)] {
+        guard hi >= lo else { return [] }
+        let tier = try tierCovering(lo)
+        var out = [(tier, lo - (lo % tier.width), hi)]
+        let maxQ = try db.prepare("SELECT max(ts) FROM history_points WHERE tier = ?1 AND ts >= ?2 AND ts <= ?3")
+        func last(_ t: HistoryTier, _ a: Int64) throws -> Int64? {
+            try maxQ.all([.int(t.rawValue), .int(a), .int(hi)]) { $0.isNull(0) ? nil : $0.int(0) }.first ?? nil
+        }
+        var tailStart = try last(tier, Int64.min).map { $0 + tier.width } ?? lo
+        for finer in HistoryTier.allCases.filter({ $0.rawValue < tier.rawValue }).reversed() {
+            let a = max(tailStart, lo)
+            out.append((finer, a, hi))
+            if let l = try last(finer, a) { tailStart = l + finer.width }
+        }
+        return out
+    }
+
+    /// Every stored app row between `from` and `to`, oldest first, from the same tiers `series` uses.
+    public func appSeries(from: Date, to: Date) throws -> [AppPoint] {
+        let lo = Int64(from.timeIntervalSince1970.rounded(.down))
+        let hi = Int64(to.timeIntervalSince1970.rounded(.down))
+        let q = try db.prepare("SELECT ts, app_id, name, cpu, memory, energy, disk_w FROM history_apps WHERE tier = ?1 AND ts >= ?2 AND ts <= ?3 ORDER BY ts")
+        var out: [AppPoint] = []
+        for (tier, a, b) in try segments(lo, hi) {
+            out += try q.all([.int(tier.rawValue), .int(a), .int(b)], Self.appPoint)
+        }
+        return out
+    }
+
+    /// Bucket width in seconds of each point `series` returns for this range (finest first is the tail).
+    public func bucketWidth(from: Date) throws -> TimeInterval {
+        TimeInterval(try tierCovering(Int64(from.timeIntervalSince1970.rounded(.down))).width)
+    }
+
+    /// Every metric's average at the finest tier point at or just before `at`.
+    public func moment(at: Date) throws -> [Metric: Double] {
+        let t = Int64(at.timeIntervalSince1970.rounded(.down))
+        let cols = Metric.allCases.map { "\($0.column)_avg" }.joined(separator: ", ")
+        let q = try db.prepare("SELECT \(cols) FROM history_points WHERE tier = ?1 AND ts <= ?2 AND ts > ?3 ORDER BY ts DESC LIMIT 1")
+        for tier in HistoryTier.allCases {
+            let rows = try q.all([.int(tier.rawValue), .int(t), .int(t - 2 * tier.width)]) { r -> [Metric: Double] in
+                var out: [Metric: Double] = [:]
+                for (i, m) in Metric.allCases.enumerated() where !r.isNull(Int32(i)) { out[m] = r.double(Int32(i)) }
+                return out
+            }
+            if let first = rows.first { return first }
+        }
+        return [:]
+    }
+
+    /// Oldest stored point, i.e. when recording started (within retention).
+    public func earliest() throws -> Date? {
+        try db.prepare("SELECT min(ts) FROM history_points").all { $0.isNull(0) ? nil : Date(timeIntervalSince1970: TimeInterval($0.int(0))) }.first ?? nil
+    }
+
+    // MARK: Events
+
+    public func append(events: [HistoryEvent]) throws {
+        guard !events.isEmpty else { return }
+        try db.transaction {
+            let ins = try db.prepare("INSERT INTO history_events(ts, kind, app, detail, value) VALUES(?1, ?2, ?3, ?4, ?5)")
+            for e in events {
+                try ins.run([.double(e.timestamp.timeIntervalSince1970), .text(e.kind.rawValue), e.app.map { .text($0) } ?? .null, .text(e.detail),
+                             e.value.map { .double($0) } ?? .null])
+            }
+        }
+    }
+
+    /// Events between `from` and `to`, oldest first. Unknown kinds (from a newer build) are skipped.
+    public func events(from: Date, to: Date) throws -> [HistoryEvent] {
+        try db.prepare("SELECT ts, kind, app, detail, value FROM history_events WHERE ts >= ?1 AND ts <= ?2 ORDER BY ts, id")
+            .all([.double(from.timeIntervalSince1970), .double(to.timeIntervalSince1970)]) { r -> HistoryEvent? in
+                guard let kind = HistoryEvent.Kind(rawValue: r.text(1) ?? "") else { return nil }
+                return HistoryEvent(timestamp: Date(timeIntervalSince1970: r.double(0)), kind: kind, app: r.text(2), detail: r.text(3) ?? "",
+                                    value: r.isNull(4) ? nil : r.double(4))
+            }
+            .compactMap { $0 }
     }
 
     /// Row count of one tier, for tests and diagnostics.
@@ -233,6 +354,7 @@ public actor HistoryStore {
         try db.transaction {
             try db.prepare("DELETE FROM history_points WHERE ts < ?1").run([.int(cutoff)])
             try db.prepare("DELETE FROM history_apps WHERE ts < ?1").run([.int(cutoff)])
+            try db.prepare("DELETE FROM history_events WHERE ts < ?1").run([.double(Double(cutoff))])
         }
     }
 
@@ -269,16 +391,18 @@ public actor HistoryStore {
 
     /// App averages are time-weighted over the whole bucket: an app absent from a finer point counts as 0.
     private static let rollAppsSQL = """
-    INSERT OR IGNORE INTO history_apps(tier, ts, app_id, name, cpu, memory, energy)
-    SELECT ?1, b, app_id, name, cpu, memory, energy FROM (
-        SELECT b, app_id, name, cpu, memory, energy,
+    INSERT OR IGNORE INTO history_apps(tier, ts, app_id, name, cpu, memory, energy, disk_w)
+    SELECT ?1, b, app_id, name, cpu, memory, energy, disk_w FROM (
+        SELECT b, app_id, name, cpu, memory, energy, disk_w,
             ROW_NUMBER() OVER (PARTITION BY b ORDER BY cpu DESC, app_id) AS rc,
-            ROW_NUMBER() OVER (PARTITION BY b ORDER BY memory DESC, app_id) AS rm
+            ROW_NUMBER() OVER (PARTITION BY b ORDER BY memory DESC, app_id) AS rm,
+            ROW_NUMBER() OVER (PARTITION BY b ORDER BY disk_w DESC, app_id) AS rd
         FROM (
             SELECT (a.ts / ?2) * ?2 AS b, a.app_id AS app_id, max(a.name) AS name,
                 sum(a.cpu * p.n) / max(t.n) AS cpu,
                 sum(a.memory * p.n) / max(t.n) AS memory,
-                sum(a.energy * p.n) / max(t.n) AS energy
+                sum(a.energy * p.n) / max(t.n) AS energy,
+                sum(a.disk_w * p.n) / max(t.n) AS disk_w
             FROM history_apps a
             JOIN history_points p ON p.tier = a.tier AND p.ts = a.ts
             JOIN (SELECT (ts / ?2) * ?2 AS tb, sum(n) AS n FROM history_points
@@ -286,7 +410,7 @@ public actor HistoryStore {
             WHERE a.tier = ?3 AND a.ts >= ?4 AND a.ts < ?5
             GROUP BY b, a.app_id
         )
-    ) WHERE rc <= \(appsPerRanking) OR rm <= \(appsPerRanking)
+    ) WHERE rc <= \(appsPerRanking) OR rm <= \(appsPerRanking) OR (rd <= \(appsPerRanking) AND disk_w > 0)
     """
 
     private func rollUp(from fine: HistoryTier, to coarse: HistoryTier, nowTs: Int64) throws {

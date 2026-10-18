@@ -18,4 +18,6 @@ import Testing
     #expect(Fmt.tokens(4_100_000) == "4.1M")
     #expect(Fmt.tokens(412_000) == "412k")
     #expect(Fmt.usd(6.4) == "$6.40")
+    #expect(Fmt.usd(9666) == "$9,666")
+    #expect(Fmt.tokens(28_420_400_000) == "28.4B")
 }

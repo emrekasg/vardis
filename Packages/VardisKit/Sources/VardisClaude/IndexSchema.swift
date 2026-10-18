@@ -2,15 +2,15 @@ import Foundation
 import VardisStore
 
 enum IndexSchema {
-    static let version = 2
+    static let version = 3
 
     static func migrate(_ db: Database) throws {
         var current = 0
-        try db.prepare("PRAGMA user_version").query { current = Int($0.int(0)); return false }
+        try db.prepare("PRAGMA user_version").query { current = Int($0.int(0)); return true }
         if current == version { return }
         if current != 0 {
             // Derived data only: rebuild from the transcripts.
-            for t in ["files", "sessions", "usage_events", "usage_slots", "turns", "fts"] { try db.execute("DROP TABLE IF EXISTS \(t)") }
+            for t in ["files", "sessions", "usage_events", "usage_slots", "turns", "fts", "fts_meta"] { try db.execute("DROP TABLE IF EXISTS \(t)") }
         }
         try db.execute("""
         CREATE TABLE IF NOT EXISTS files(
@@ -47,8 +47,10 @@ enum IndexSchema {
         );
         CREATE INDEX IF NOT EXISTS sessions_activity ON sessions(last_activity_at DESC);
         CREATE INDEX IF NOT EXISTS sessions_project ON sessions(project_path, last_activity_at DESC);
+        -- One row per assistant message (dedupe across streamed copies, files and refreshes).
+        -- key = 64-bit FNV-1a of "<message id>:<request id>"; slots are maintained by delta, so no secondary index.
         CREATE TABLE IF NOT EXISTS usage_events(
-            key TEXT PRIMARY KEY,
+            key INTEGER PRIMARY KEY,
             session_id TEXT NOT NULL,
             ts REAL NOT NULL,
             model TEXT NOT NULL,
@@ -60,8 +62,7 @@ enum IndexSchema {
             cost REAL NOT NULL,
             priced INTEGER NOT NULL,
             sidechain INTEGER NOT NULL
-        ) WITHOUT ROWID;
-        CREATE INDEX IF NOT EXISTS usage_session_ts ON usage_events(session_id, ts);
+        );
         -- Usage pre-aggregated per 15-minute slot, session and model; what charts and session totals read.
         CREATE TABLE IF NOT EXISTS usage_slots(
             slot INTEGER NOT NULL,
@@ -92,11 +93,23 @@ enum IndexSchema {
             last_msg TEXT,
             PRIMARY KEY(session_id, idx)
         ) WITHOUT ROWID;
-        CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
-            text, session_id UNINDEXED, role UNINDEXED, ts UNINDEXED, file_id UNINDEXED,
-            tokenize = 'unicode61 remove_diacritics 2'
+        -- Where each indexed message lives in its transcript; snippets are cut from the file, not stored here.
+        CREATE TABLE IF NOT EXISTS fts_meta(
+            rowid INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role INTEGER NOT NULL,
+            ts REAL,
+            file_id INTEGER NOT NULL,
+            line_offset INTEGER NOT NULL,
+            line_length INTEGER NOT NULL
         );
-        PRAGMA user_version = \(version);
         """)
+        // Contentless: the index holds terms only. Older SQLite without contentless_delete keeps content instead.
+        do {
+            try db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 2')")
+        } catch {
+            try db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, tokenize='unicode61 remove_diacritics 2')")
+        }
+        try db.execute("PRAGMA user_version = \(version)")
     }
 }

@@ -53,54 +53,88 @@ final class LiveModel {
 
     /// Fast mode (1 s) while a screen with live data is visible; otherwise 5 s.
     var isFast = false {
-        didSet { if isFast != oldValue { restart() } }
+        didSet { if isFast != oldValue { wake() } }
     }
     var isPaused = false
 
-    /// Called on every sample, visible or not (menu bar titles, history writer, alerts).
+    /// While nothing is on screen, ticks only read CPU, memory and network (what the menu bar shows);
+    /// the per-process walk runs this often. History can lower it to 5 s if it needs per-app rows that often.
+    @ObservationIgnored var backgroundFullSampleInterval: Duration = .seconds(30)
+
+    /// Called on every sample, visible or not (menu bar titles, alerts). Apps may be carried over from
+    /// the last full sample on cheap ticks.
     @ObservationIgnored private var tickObservers: [@MainActor (Snapshot) -> Void] = []
+    /// Called only after a full per-process sample (history writer).
+    @ObservationIgnored private var fullSampleObservers: [@MainActor (Snapshot) -> Void] = []
 
     func onEveryTick(_ observer: @escaping @MainActor (Snapshot) -> Void) { tickObservers.append(observer) }
+    func onEveryFullSample(_ observer: @escaping @MainActor (Snapshot) -> Void) { fullSampleObservers.append(observer) }
 
     @ObservationIgnored private let sampler = Sampler()
     @ObservationIgnored private var loop: Task<Void, Never>?
+    @ObservationIgnored private var sleeper: Task<Void, Never>?
+    @ObservationIgnored private var lastFull: ContinuousClock.Instant?
+    @ObservationIgnored private var wantsFull = true
+    /// A wake that arrived while a sample was running; the loop skips its next wait.
+    @ObservationIgnored private var wakePending = false
 
     func start() {
         guard loop == nil else { return }
         loop = Task { [weak self] in
+            let clock = ContinuousClock()
             while !Task.isCancelled {
                 guard let self else { return }
                 if !self.isPaused {
-                    let clock = ContinuousClock()
                     let started = clock.now
-                    let s = await self.sampler.sample()
+                    let full = self.wantsFull || !self.presenters.isEmpty
+                        || self.lastFull.map { started - $0 >= self.backgroundFullSampleInterval } ?? true
+                    self.wantsFull = false
+                    let background = self.presenters.isEmpty
+                    let s = full ? await self.sampler.sample(background: background) : await self.sampler.sampleSystem()
+                    if full { self.lastFull = started }
                     self.working.lastSampleDuration = clock.now - started
-                    self.apply(s)
+                    self.apply(s, full: full)
                 }
-                let fast = self.isFast
-                try? await Task.sleep(for: fast ? .seconds(1) : .seconds(5), tolerance: fast ? .milliseconds(100) : .seconds(1))
+                // Generous leeway while idle lets the kernel coalesce our wake-ups with others (App Nap does the rest).
+                let interval: Duration = self.isFast ? .seconds(1) : .seconds(5)
+                let tolerance: Duration = self.isFast ? .milliseconds(100) : self.presenters.isEmpty ? .seconds(2) : .milliseconds(500)
+                if self.wakePending { self.wakePending = false; continue }
+                let nap = Task { _ = try? await Task.sleep(for: interval, tolerance: tolerance) }
+                self.sleeper = nap
+                await nap.value
+                self.sleeper = nil
+                self.wakePending = false
             }
         }
     }
 
-    /// A window or popover announces it is on screen. The first presenter gets the latest state at once.
+    /// Ends the current wait so the next sample is taken now.
+    private func wake() {
+        if let sleeper { sleeper.cancel() } else { wakePending = true }
+    }
+
+    /// A window or popover announces it is on screen. The first presenter gets the latest state at once,
+    /// and a full sample follows immediately so per-app numbers are fresh within milliseconds.
     func setPresenting(_ id: String, _ visible: Bool) {
         let wasEmpty = presenters.isEmpty
         if visible { presenters.insert(id) } else { presenters.remove(id) }
-        if wasEmpty && !presenters.isEmpty { state = working }
+        if wasEmpty && !presenters.isEmpty {
+            state = working
+            wantsFull = true
+            wake()
+        }
     }
 
     func processes(inApp id: String) async -> [ProcessSample] {
         await sampler.processes(inApp: id)
     }
 
-    private func restart() {
-        loop?.cancel()
-        loop = nil
-        start()
+    /// Owning app per pid, from the last full sample.
+    func apps(forPIDs pids: [Int32]) async -> [Int32: AppIdentity] {
+        await sampler.apps(forPIDs: pids)
     }
 
-    private func apply(_ s: Snapshot) {
+    private func apply(_ s: Snapshot, full: Bool) {
         working.snapshot = s
         working.cpu.append(s.cpu.total)
         working.memory.append(s.memory.total > 0 ? Double(s.memory.used) / Double(s.memory.total) : 0)
@@ -112,15 +146,18 @@ final class LiveModel {
         working.cpuAverage += (s.cpu.total - working.cpuAverage) / Double(working.cpuSamples)
         working.gpuPeak = max(working.gpuPeak, s.gpu?.utilization ?? 0)
 
-        var seen = Set<String>()
-        for app in s.apps.prefix(80) {
-            seen.insert(app.id)
-            working.appMemory[app.id, default: RingBuffer(capacity: Self.historyLength, filler: 0)].append(Double(app.memory))
+        if full {
+            var seen = Set<String>()
+            for app in s.apps.prefix(80) {
+                seen.insert(app.id)
+                working.appMemory[app.id, default: RingBuffer(capacity: Self.historyLength, filler: 0)].append(Double(app.memory))
+            }
+            if working.appMemory.count > 200 { working.appMemory = working.appMemory.filter { seen.contains($0.key) } }
         }
-        if working.appMemory.count > 200 { working.appMemory = working.appMemory.filter { seen.contains($0.key) } }
         working.ownFootprint = Self.currentFootprint()
         if !presenters.isEmpty { state = working }
         for o in tickObservers { o(s) }
+        if full { for o in fullSampleObservers { o(s) } }
     }
 
     private static func currentFootprint() -> UInt64 {

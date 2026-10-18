@@ -45,5 +45,11 @@ struct RealDataTests {
             sum + ((try? FileManager.default.attributesOfItem(atPath: tmp.appendingPathComponent(name).path)[.size] as? Int) ?? 0)
         }
         print("[real] dbMB=\(dbSize / 1_000_000)")
+        if let keep = ProcessInfo.processInfo.environment["VARDIS_REAL_KEEP_DB"] {
+            for suffix in ["", "-wal"] {
+                try? FileManager.default.removeItem(atPath: keep + suffix)
+                try? FileManager.default.copyItem(at: tmp.appendingPathComponent("index.sqlite" + suffix), to: URL(fileURLWithPath: keep + suffix))
+            }
+        }
     }
 }

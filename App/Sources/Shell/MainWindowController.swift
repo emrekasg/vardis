@@ -36,11 +36,18 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     }
 
     func show(_ screen: Screen? = nil) {
+        let started = ContinuousClock.now
         if let screen { nav.screen = screen }
         NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
         updateSampling()
+        if CommandLine.arguments.contains("--print-launch") {
+            // Time to the end of the next run loop turn, which includes the first display of the window.
+            DispatchQueue.main.async {
+                FileHandle.standardError.write(Data(String(format: "window_open_ms=%.1f\n", (ContinuousClock.now - started).milliseconds).utf8))
+            }
+        }
     }
 
     var isVisible: Bool { window.isVisible && window.occlusionState.contains(.visible) }
