@@ -11,6 +11,10 @@ enum Motion {
     static let travel = Animation.spring(response: 0.3, dampingFraction: 0.86)
     /// Live values easing to their new reading.
     static let value = Animation.smooth(duration: 0.45)
+    /// Drawers and sheets sliding in.
+    static let drawer = Animation.spring(response: 0.34, dampingFraction: 0.9)
+    /// Staggered entrance for grids: item `i` starts `i × 25 ms` later, capped so the last starts by 150 ms.
+    static func stagger(_ i: Int) -> Animation { screen.delay(min(Double(i) * 0.025, 0.15)) }
 }
 
 extension View {
@@ -52,4 +56,22 @@ struct HoverHighlight: ViewModifier {
             .onHover { hovering = $0 }
             .motion(Motion.quick, value: hovering)
     }
+}
+
+/// Fades and lifts a grid item in on first appearance, staggered by index.
+struct StaggeredAppear: ViewModifier {
+    let index: Int
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown || reduceMotion ? 1 : 0)
+            .offset(y: shown || reduceMotion ? 0 : 8)
+            .onAppear { withAnimation(Motion.stagger(index)) { shown = true } }
+    }
+}
+
+extension View {
+    func staggeredAppear(_ index: Int) -> some View { modifier(StaggeredAppear(index: index)) }
 }
