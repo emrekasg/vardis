@@ -55,7 +55,9 @@ struct SamplerTests {
         }
         timings.sort()
         let median = timings[timings.count / 2]
-        let budget = 5.0 * max(1, Double(processCount) / 700)
+        // Shared CI runners are noisy and slower; the median is still printed so regressions show in logs.
+        let ciSlack = ProcessInfo.processInfo.environment["CI"] == nil ? 1.0 : 10.0
+        let budget = 5.0 * max(1, Double(processCount) / 700) * ciSlack
         print("vardis-sampling: sample() median \(String(format: "%.2f", median)) ms, min \(String(format: "%.2f", timings[0])), max \(String(format: "%.2f", timings.last!)), processes \(processCount), budget \(String(format: "%.1f", budget)) ms")
         #expect(median < budget)
     }

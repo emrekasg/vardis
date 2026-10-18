@@ -18,6 +18,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     defaults:
       run:
         working-directory: website
@@ -36,8 +38,14 @@ jobs:
           node-version: 22
 
       - run: npm ci --no-audit --no-fund
+        if: env.HAS_TOKEN == 'true'
+
+      - name: Skip deploy (no CLOUDFLARE_API_TOKEN secret)
+        if: env.HAS_TOKEN != 'true'
+        run: echo "::notice::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets to deploy from CI."
 
       - name: Deploy
+        if: env.HAS_TOKEN == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
