@@ -12,7 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
     private var aux: AuxWindows?
     private var hotKey: GlobalHotKey?
-    private var lastStatusTitles = ""
     static let signposter = OSSignposter(subsystem: "app.vardis", category: "launch")
 
     static func main() {
@@ -30,15 +29,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Status items first: they are what the user sees at launch. The main window is built on the
         // next run loop turn (or synchronously on the first open, if that comes sooner).
         aux = AuxWindows(live: live)
-        statusBar = StatusBarController(live: live) { [weak self] screen in self?.mainWindow().show(screen) }
-        live.onEveryTick { [weak self] s in
-            // Redrawing a status item costs more than the sample behind it; skip ticks that change nothing visible.
-            guard let self else { return }
-            let titles = Fmt.percent(s.cpu.total) + "|" + Fmt.bytes(s.memory.used)
-            guard titles != self.lastStatusTitles else { return }
-            self.lastStatusTitles = titles
-            self.statusBar?.update(s)
-        }
+        // One status item; it re-sets its title only when the text changed (see StatusBarController).
+        statusBar = StatusBarController(
+            live: live, models: models,
+            openWindow: { [weak self] screen in self?.mainWindow().show(screen) },
+            openSettings: { [weak self] in self?.aux?.showSettings() },
+            restoreSampling: { [weak self] in
+                // The panel sped sampling up; hand the rate back to the main window's own rule.
+                guard let self else { return }
+                if let wc = self.windowController { wc.updateSampling() } else { self.live.isFast = false }
+            })
         live.start()
         models.start(live: live)
         hotKey = GlobalHotKey { [weak self] in self?.mainWindow().show() }
@@ -127,10 +127,7 @@ final class AppModels {
     func start(live: LiveModel) {
         // VARDIS_DISABLE=claude,cleanup,history turns models off, for measuring what each one costs.
         let off = Set((ProcessInfo.processInfo.environment["VARDIS_DISABLE"] ?? "").split(separator: ",").map(String.init))
-        if !off.contains("claude") {
-            claude.start()
-            ClaudeStatusItem.install(model: claude)
-        }
+        if !off.contains("claude") { claude.start() }
         if !off.contains("cleanup") { cleanup.start() }
         if !off.contains("history") { history.start(live: live) }
     }

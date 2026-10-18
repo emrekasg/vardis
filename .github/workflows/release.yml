@@ -1,105 +1,123 @@
 name: Release
 
-# TODO: this workflow is a stub. Nothing below the checkout runs yet.
-# Uncomment and finish each step once signing certificates and the
-# notarization credentials exist as repository secrets.
+# Runs when a version tag is pushed (scripts/bump-version.sh creates it):
+#   git push origin main --tags
 #
-# Secrets this workflow will use (names only, values live in GitHub settings):
-#   DEVELOPER_ID_CERT_P12        base64 Developer ID Application certificate
-#   DEVELOPER_ID_CERT_PASSWORD   password for the .p12
-#   KEYCHAIN_PASSWORD            password for the temporary build keychain
+# Optional secrets (names only; without them the app is ad-hoc signed and not notarized):
+#   DEVELOPER_ID_CERT_P12        base64 of the Developer ID Application .p12
+#   DEVELOPER_ID_CERT_PASSWORD   its password
+#   DEVELOPER_ID_IDENTITY        e.g. "Developer ID Application: Name (TEAMID)"
 #   APPLE_TEAM_ID                Apple Developer team id
-#   NOTARY_APPLE_ID              Apple ID used by notarytool
+#   NOTARY_APPLE_ID              Apple ID for notarytool
 #   NOTARY_APP_PASSWORD          app-specific password for that Apple ID
-#   SPARKLE_ED_PRIVATE_KEY       EdDSA key that signs the appcast entries
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8   App Store Connect API key (App Store upload job)
 
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to release, for example 0.1.0"
-        required: true
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  release:
-    name: Build, notarize and publish
+  direct:
+    name: Direct download (DMG + zip)
     runs-on: macos-26
     timeout-minutes: 60
-
+    env:
+      HAS_CERT: ${{ secrets.DEVELOPER_ID_CERT_P12 != '' }}
+      HAS_ASC: ${{ secrets.ASC_KEY_ID != '' }}
+    outputs:
+      has_asc: ${{ steps.flags.outputs.has_asc }}
     steps:
-      - name: Check out
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: TODO
-        run: echo "Release pipeline not implemented yet. See the commented steps in release.yml."
+      - id: flags
+        run: echo "has_asc=$HAS_ASC" >> "$GITHUB_OUTPUT"
 
-      # - name: Install tools
-      #   run: brew install xcodegen create-dmg
-      #
-      # - name: Generate Xcode project
-      #   run: xcodegen generate
-      #
-      # - name: Import signing certificate
-      #   env:
-      #     CERT_P12: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
-      #     CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
-      #     KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-      #   run: |
-      #     echo "$CERT_P12" | base64 --decode > cert.p12
-      #     security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-      #     security default-keychain -s build.keychain
-      #     security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-      #     security import cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
-      #     security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-      #     rm cert.p12
-      #
-      # - name: Archive
-      #   run: |
-      #     xcodebuild -project Vardis.xcodeproj -scheme Vardis \
-      #       -configuration Release \
-      #       -archivePath build/Vardis.xcarchive \
-      #       MARKETING_VERSION=${{ inputs.version }} \
-      #       DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
-      #       CODE_SIGN_IDENTITY="Developer ID Application" \
-      #       archive
-      #     xcodebuild -exportArchive \
-      #       -archivePath build/Vardis.xcarchive \
-      #       -exportOptionsPlist Config/ExportOptions-DeveloperID.plist \
-      #       -exportPath build/export
-      #
-      # - name: Build DMG
-      #   run: |
-      #     create-dmg --volname "Vardis" --app-drop-link 480 160 \
-      #       build/Vardis-${{ inputs.version }}.dmg build/export/Vardis.app
-      #
-      # - name: Notarize
-      #   env:
-      #     NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-      #     NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
-      #     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      #   run: |
-      #     xcrun notarytool submit build/Vardis-${{ inputs.version }}.dmg \
-      #       --apple-id "$NOTARY_APPLE_ID" \
-      #       --password "$NOTARY_APP_PASSWORD" \
-      #       --team-id "$APPLE_TEAM_ID" \
-      #       --wait
-      #
-      # - name: Staple
-      #   run: xcrun stapler staple build/Vardis-${{ inputs.version }}.dmg
-      #
-      # - name: Sign appcast entry
-      #   env:
-      #     SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-      #   run: echo "TODO: run Sparkle sign_update and update website/appcast.xml"
-      #
-      # - name: Publish GitHub Release
-      #   env:
-      #     GH_TOKEN: ${{ github.token }}
-      #   run: |
-      #     gh release create "v${{ inputs.version }}" \
-      #       build/Vardis-${{ inputs.version }}.dmg \
-      #       --title "Vardis ${{ inputs.version }}" \
-      #       --generate-notes
+      - name: Install tools
+        run: brew install xcodegen
+
+      - name: Test
+        working-directory: Packages/VardisKit
+        run: |
+          swift test 2>&1 | tee test.log
+          grep -q "Test run with .* passed" test.log
+          ! grep -q "✘" test.log
+
+      - name: Import signing certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security list-keychains -d user -s build.keychain login.keychain
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Build, sign, notarize, package
+        env:
+          DEVELOPER_ID_IDENTITY: ${{ secrets.DEVELOPER_ID_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+        run: scripts/build-release.sh
+
+      - name: Release notes from CHANGELOG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            $0 ~ "^## " v " " { on=1; next }
+            on && /^## / { exit }
+            on { print }' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Vardis $VERSION" > notes.md
+          if [ "$HAS_CERT" != "true" ]; then
+            printf '\nThis build is not notarized yet. The first time, right-click Vardis in Applications and choose Open.\n' >> notes.md
+          fi
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            build/dist/Vardis-*.dmg build/dist/Vardis-*.zip build/dist/SHA256SUMS.txt \
+            --title "Vardis ${GITHUB_REF_NAME#v}" --notes-file notes.md
+
+  app-store:
+    name: App Store upload
+    runs-on: macos-26
+    timeout-minutes: 60
+    needs: direct
+    if: startsWith(github.ref, 'refs/tags/v') && needs.direct.outputs.has_asc == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen && xcodegen generate --quiet
+      - name: Archive and upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          xcodebuild -project Vardis.xcodeproj -scheme VardisAppStore -configuration Release \
+            -archivePath build/VardisAppStore.xcarchive -destination 'generic/platform=macOS' \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development" "${AUTH[@]}" archive
+          xcodebuild -exportArchive -archivePath build/VardisAppStore.xcarchive \
+            -exportOptionsPlist Config/ExportOptions-AppStore.plist -exportPath build/appstore "${AUTH[@]}"
+          rm "$RUNNER_TEMP/AuthKey.p8"

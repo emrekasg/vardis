@@ -214,10 +214,10 @@ enum CommandRunner {
                 let deadline = DispatchWorkItem { if p.isRunning { p.terminate() } }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
                 // Read stderr concurrently so a chatty command cannot fill its pipe and stall.
-                var errData = Data()
+                let errBox = DataBox()
                 let group = DispatchGroup()
                 group.enter()
-                DispatchQueue.global(qos: .utility).async { errData = err.fileHandleForReading.readDataToEndOfFile(); group.leave() }
+                DispatchQueue.global(qos: .utility).async { errBox.data = err.fileHandleForReading.readDataToEndOfFile(); group.leave() }
                 let outData = out.fileHandleForReading.readDataToEndOfFile()
                 p.waitUntilExit()
                 group.wait()
@@ -226,10 +226,15 @@ enum CommandRunner {
                 cont.resume(returning: Result(status: timedOut ? -2 : p.terminationStatus,
                                               output: String(decoding: outData, as: UTF8.self),
                                               error: timedOut ? "Docker did not answer within \(Int(timeout)) s." :
-                                                  String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+                                                  String(decoding: errBox.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
             }
         }
     }
+}
+
+/// Written by one reader thread, read after `DispatchGroup.wait()`, so never concurrently.
+private final class DataBox: @unchecked Sendable {
+    var data = Data()
 }
 
 /// `docker stats --format json` left running; each line is handed to the main actor.

@@ -1,42 +1,44 @@
 name: Website
 
+# Deploys website/ to the `vardis` Worker (static assets on vardis.app) with the cf CLI.
+# Secrets: CLOUDFLARE_API_TOKEN (Workers Scripts:Edit, Workers Routes/Custom Domains:Edit on the zone)
+#          CLOUDFLARE_ACCOUNT_ID
+
 on:
   push:
     branches: [main]
-    paths:
-      - "website/**"
-      - ".github/workflows/website.yml"
+    paths: ["website/**", ".github/workflows/website.yml"]
   workflow_dispatch:
-
-permissions:
-  contents: read
-  deployments: write
 
 concurrency:
   group: website
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Deploy vardis.app to Cloudflare Pages
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
+    defaults:
+      run:
+        working-directory: website
     steps:
-      - name: Check out
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Check for third-party requests
+      - name: No third-party requests in the site
         run: |
-          # The site must load nothing from other origins.
-          if grep -nE '(src|href|url\()=?["'"'"'(]?https?://' website/*.html website/assets/css/*.css website/assets/js/*.js \
-              | grep -vE 'https://(vardis\.app|github\.com)/'; then
-            echo "Found an external resource reference." && exit 1
+          if grep -rEho 'https?://[^"'"'"' )]+' public --include='*.html' --include='*.css' --include='*.js' \
+             | grep -vE '^https?://(vardis\.app|www\.vardis\.app|github\.com/emrekasg)' | grep -q .; then
+            echo "External URL found in the site:"; exit 1
           fi
 
-      - name: Deploy
-        uses: cloudflare/wrangler-action@v3
+      - uses: actions/setup-node@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy website --project-name=vardis --branch=main
+          node-version: 22
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx cf deploy --message "${GITHUB_SHA::7}"

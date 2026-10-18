@@ -134,6 +134,7 @@ private struct SidebarBadge: View {
         case .apps: AppsBadge()
         case .diskCleanup: CleanupBadge()
         case .claudeLive: ClaudeLiveBadge()
+        case .ports: PortsBadge()
         default: EmptyView()
         }
     }

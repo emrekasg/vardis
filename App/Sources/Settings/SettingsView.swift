@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ServiceManagement
 import SwiftUI
 import VardisCore
@@ -28,7 +29,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: ["login", "dock", "appearance", "dark", "light", "shortcut", "units", "temperature", "updates"]
         case .performance: ["sampling", "interval", "battery", "history", "memory"]
-        case .menuBar: ["cpu", "memory", "network", "battery", "disk", "status"]
+        case .menuBar: ["cpu", "memory", "network", "battery", "disk", "gpu", "ports", "status", "panel", "tabs", "tiles", "theme"]
         case .alerts: ["notifications", "leak", "awake", "quiet", "limit"]
         case .cleanup: ["xcode", "simulators", "node_modules", "caches", "trash", "large files"]
         case .claude: ["sessions", "search", "terminal", "resume", "cost"]
@@ -76,7 +77,20 @@ struct SettingsView: View {
     @State private var query = ""
     @Namespace private var pill
 
-    init(initialPane: SettingsPane = .general) { _pane = State(initialValue: initialPane) }
+    init(initialPane: SettingsPane = .general) { _pane = State(initialValue: Self.takeRequest() ?? initialPane) }
+
+    @MainActor private static var requestedPane: SettingsPane?
+
+    /// Asks Settings to show `pane`: the window opens on it, or an open window switches to it.
+    static func request(_ pane: SettingsPane) {
+        requestedPane = pane
+        NotificationCenter.default.post(name: .vardisSelectSettingsPane, object: pane.rawValue)
+    }
+
+    private static func takeRequest() -> SettingsPane? {
+        defer { requestedPane = nil }
+        return requestedPane
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -118,6 +132,12 @@ struct SettingsView: View {
         }
         .frame(width: 900, height: 660)
         .ignoresSafeArea()
+        .onReceive(NotificationCenter.default.publisher(for: .vardisSelectSettingsPane)) { n in
+            guard let raw = n.object as? String, let p = SettingsPane(rawValue: raw) else { return }
+            query = ""
+            pane = p
+            _ = Self.takeRequest()
+        }
     }
 
     /// Panes whose name, or a word that belongs to them, matches the search.
@@ -234,22 +254,154 @@ private struct PerformancePane: View {
 }
 
 private struct MenuBarPane: View {
-    @AppStorage(Pref.menuCPU) private var cpu = true
-    @AppStorage(Pref.menuMemory) private var mem = true
-    @AppStorage(Pref.menuClaude) private var claude = true
-    @AppStorage(Pref.menuNetwork) private var net = false
-    @AppStorage(Pref.menuBattery) private var bat = false
-    @AppStorage(Pref.menuDisk) private var disk = false
+    @Bindable private var prefs = MenuBarPrefs.shared
 
     var body: some View {
-        GroupBoxV(title: "Items", footer: "Hold ⌘ and drag items in the menu bar to reorder them.") {
-            FormRow(label: "CPU") { toggle($cpu) }
-            FormRow(label: "Memory") { toggle($mem) }
-            FormRow(label: "Claude Code", detail: "Active account’s 5-hour window") { toggle($claude) }
-            FormRow(label: "Network") { toggle($net) }
-            FormRow(label: "Battery") { toggle($bat) }
-            FormRow(label: "Disk", showsDivider: false) { toggle($disk) }
+        MenuBarPreview(pieces: MenuBarFeed.shared.ordered(prefs.enabledReadouts))
+        GroupBoxV(title: "Status item", footer: prefs.showReadouts ? "Drag to reorder. Values refresh once per sample, and only when the text changes." : nil) {
+            FormRow(label: "Show", detail: "Vardis uses one menu bar item", showsDivider: prefs.showReadouts) {
+                Picker("", selection: $prefs.showReadouts) { Text("Icon only").tag(false); Text("Icon and values").tag(true) }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+            }
+            if prefs.showReadouts {
+                ReorderList(items: $prefs.readouts, minimumOn: 0)
+            }
         }
+        GroupBoxV(title: "Panel tabs", footer: "Battery & Power shows only on Macs with a battery, and Claude Code once Vardis finds an account. ⌘1 to ⌘9 switch tabs.") {
+            ReorderList(items: $prefs.tabs, minimumOn: 1)
+        }
+        GroupBoxV(title: "Overview tiles") {
+            ReorderList(items: $prefs.tiles, minimumOn: 0)
+        }
+        GroupBoxV(title: "Panel", footer: "Match menu bar follows the menu bar, which is dark on dark wallpapers and in Dark Mode.") {
+            FormRow(label: "Theme", showsDivider: false) {
+                Picker("", selection: $prefs.theme) { Text("Match menu bar").tag(PanelTheme.system); Text("Light").tag(PanelTheme.light); Text("Dark").tag(PanelTheme.dark) }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+            }
+        }
+        HStack {
+            Spacer()
+            Button("Restore Defaults") { prefs.resetToDefaults() }
+        }
+    }
+}
+
+/// The Menu Bar pane alone, for `--menubar-snapshot <png> --tab settings`.
+struct MenuBarPaneSnapshot: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(SettingsPane.menuBar.rawValue).font(.titleV).foregroundStyle(Theme.text)
+            MenuBarPane()
+        }
+        .padding(.horizontal, 36).padding(.vertical, 32)
+        .frame(width: 672, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Theme.window)
+    }
+}
+
+/// A strip of menu bar with the status item as it looks right now.
+private struct MenuBarPreview: View {
+    let pieces: [MenuPiece]
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Spacer()
+            Image(systemName: "wifi").foregroundStyle(Theme.textSecondary)
+            Image(nsImage: StatusTitleRenderer.image(pieces))
+                .renderingMode(.template)
+                .foregroundStyle(Theme.text)
+                .padding(.horizontal, 7).frame(height: 22)
+                .background(Theme.text.opacity(0.1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            Text(Date.now.formatted(.dateTime.weekday(.abbreviated).hour().minute())).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text)
+        }
+        .font(.system(size: 13, weight: .medium))
+        .padding(.horizontal, 12).frame(height: 32)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.separator))
+        .accessibilityLabel("Preview of the menu bar item")
+    }
+}
+
+/// Something a Menu Bar list can show: a title, a symbol and an optional detail.
+private protocol MenuChoiceItem: Hashable, Sendable, RawRepresentable<String> {
+    var title: String { get }
+    var symbol: String { get }
+    var choiceDetail: String? { get }
+}
+
+extension MenuReadout: MenuChoiceItem { var choiceDetail: String? { detail } }
+extension MenuTab: MenuChoiceItem { var choiceDetail: String? { nil } }
+extension MenuTile: MenuChoiceItem { var choiceDetail: String? { nil } }
+
+/// Toggle rows that reorder by dragging (or with Move Up / Move Down in the context menu).
+private struct ReorderList<Item: MenuChoiceItem>: View {
+    @Binding var items: [OrderedChoice<Item>]
+    let minimumOn: Int
+    @State private var dragging: Item?
+
+    var body: some View {
+        ForEach(Array(items.enumerated()), id: \.element.item) { i, choice in
+            row(i, choice)
+        }
+    }
+
+    private func row(_ i: Int, _ choice: OrderedChoice<Item>) -> some View {
+        let onCount = items.filter(\.isOn).count
+        return FormRow(label: choice.item.title, detail: choice.item.choiceDetail, showsDivider: i < items.count - 1) {
+            Toggle("", isOn: Binding(get: { items[safe: i]?.isOn ?? false }, set: { v in
+                guard i < items.count else { return }
+                withAnimation(Motion.quick) { items[i].isOn = v }
+            }))
+            .toggleStyle(.switch).labelsHidden()
+            .disabled(choice.isOn && onCount <= minimumOn)
+        }
+        .padding(.leading, 42)
+        .overlay(alignment: .leading) {
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textTertiary)
+                Image(systemName: choice.item.symbol).font(.system(size: 11, weight: .medium)).foregroundStyle(choice.isOn ? Theme.textSecondary : Theme.textTertiary).frame(width: 16)
+            }
+        }
+        .opacity(dragging == choice.item ? 0.45 : 1)
+        .contentShape(Rectangle())
+        .onDrag {
+            dragging = choice.item
+            return NSItemProvider(object: choice.item.rawValue as NSString)
+        }
+        .onDrop(of: [.text], delegate: ReorderDropDelegate(target: choice.item, items: $items, dragging: $dragging))
+        .contextMenu {
+            Button("Move Up") { move(i, by: -1) }.disabled(i == 0)
+            Button("Move Down") { move(i, by: 1) }.disabled(i == items.count - 1)
+        }
+    }
+
+    private func move(_ i: Int, by d: Int) {
+        let j = i + d
+        guard items.indices.contains(i), items.indices.contains(j) else { return }
+        withAnimation(Motion.travel) { items.swapAt(i, j) }
+    }
+}
+
+private struct ReorderDropDelegate<Item: MenuChoiceItem>: DropDelegate {
+    let target: Item
+    @Binding var items: [OrderedChoice<Item>]
+    @Binding var dragging: Item?
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging, dragging != target,
+              let from = items.firstIndex(where: { $0.item == dragging }),
+              let to = items.firstIndex(where: { $0.item == target }) else { return }
+        withAnimation(Motion.travel) {
+            items.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
     }
 }
 
@@ -419,4 +571,5 @@ enum AppPaths {
 
 extension Notification.Name {
     static let vardisShowOnboarding = Notification.Name("vardisShowOnboarding")
+    static let vardisSelectSettingsPane = Notification.Name("vardisSelectSettingsPane")
 }
