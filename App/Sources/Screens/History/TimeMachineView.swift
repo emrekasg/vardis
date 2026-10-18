@@ -32,7 +32,15 @@ struct TimeMachineView: View {
         .focused($focused)
         .onKeyPress(.leftArrow) { move(-Self.step); return .handled }
         .onKeyPress(.rightArrow) { move(Self.step); return .handled }
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            if let d = TimeMachineFocus.shared.take() { history.select(d) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vardisOpenTimeMachine)) { n in
+            guard let d = n.userInfo?["date"] as? Date else { return }
+            _ = TimeMachineFocus.shared.take()
+            history.select(d)
+        }
         .task { await history.refreshWeek() }
     }
 
@@ -252,29 +260,52 @@ private struct MomentStats: View {
 
 private struct AroundIt: View {
     let moment: MomentData
+    @State private var showSystem = false
 
     var body: some View {
+        let system = moment.rows.filter(\.isSystem).count
+        let rows = moment.rows.filter { showSystem || !$0.isSystem }
         VStack(alignment: .leading, spacing: 0) {
-            Text("What happened around it").font(.headlineV).foregroundStyle(Theme.text)
-            Text("15 minutes either side").font(.captionV).foregroundStyle(Theme.textTertiary).padding(.top, 2).padding(.bottom, 8)
-            Hairline()
-            if moment.events.isEmpty {
-                Text("No launches, quits, sleeps or warnings in this window.").font(.calloutV).foregroundStyle(Theme.textTertiary).padding(.vertical, 10)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("What happened around it").font(.headlineV).foregroundStyle(Theme.text)
+                    Text("15 minutes either side · repeats within 2 minutes shown once").font(.captionV).foregroundStyle(Theme.textTertiary)
+                }
+                Spacer()
+                if system > 0 {
+                    Button(showSystem ? "Hide system" : "Show system (\(system))") { showSystem.toggle() }
+                        .buttonStyle(.link).font(.captionV)
+                        .help("macOS services such as bluetoothd and coreaudiod keep the Mac awake on your behalf")
+                }
             }
-            ForEach(Array(moment.events.enumerated()), id: \.offset) { _, e in
+            .padding(.bottom, 8)
+            Hairline()
+            if rows.isEmpty {
+                Text(system > 0 ? "Only macOS services were active in this window." : "No launches, quits, sleeps or warnings in this window.")
+                    .font(.calloutV).foregroundStyle(Theme.textTertiary).padding(.vertical, 10)
+            }
+            ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
+                let e = r.event
                 HStack(spacing: 12) {
                     Text(e.timestamp.formatted(date: .omitted, time: .shortened)).font(.numeric).foregroundStyle(Theme.textTertiary)
                         .frame(width: 54, alignment: .leading)
                     Image(systemName: EventStyle.symbol(e)).font(.system(size: 12)).foregroundStyle(EventStyle.color(e)).frame(width: 16)
-                    Text(EventStyle.text(e)).font(.bodyV).foregroundStyle(Theme.text).lineLimit(1)
+                    Text(EventStyle.text(e)).font(.bodyV).foregroundStyle(r.isSystem ? Theme.textSecondary : Theme.text).lineLimit(1)
+                    if r.count > 1 { Badge("×\(r.count)") }
+                    if let d = r.duration, e.kind == .keptAwakeStarted || e.kind == .cpuHog {
+                        Text(r.ongoing ? "for \(Fmt.duration(d)) so far" : "for \(Fmt.duration(d))")
+                            .font(.calloutV).foregroundStyle(Theme.textSecondary)
+                    }
                     Spacer()
                     let dt = e.timestamp.timeIntervalSince(moment.at)
                     Text(abs(dt) < 60 ? "at this moment" : "\(Int(abs(dt) / 60)) min \(dt < 0 ? "before" : "after")")
                         .font(.captionV).foregroundStyle(Theme.textTertiary)
                 }
                 .frame(height: 30)
+                .staggeredAppear(i)
                 Hairline()
             }
         }
+        .motion(Motion.screen, value: showSystem)
     }
 }

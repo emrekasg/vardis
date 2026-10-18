@@ -7,6 +7,7 @@ struct DetailDrawer<Item: Identifiable & Equatable, Panel: View>: ViewModifier {
     var width: CGFloat = 420
     @ViewBuilder var panel: (Item) -> Panel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.cancelShortcutBlocked) private var cancelBlocked
 
     func body(content base: Content) -> some View {
         base.overlay {
@@ -28,7 +29,7 @@ struct DetailDrawer<Item: Identifiable & Equatable, Panel: View>: ViewModifier {
                                     .background(Theme.raised, in: Circle())
                             }
                             .buttonStyle(.plain)
-                            .keyboardShortcut(.cancelAction)
+                            .keyboardShortcut(cancelBlocked ? nil : .cancelAction)
                             .help("Close (Esc)")
                         }
                         .padding(.horizontal, 16).padding(.top, 14)
@@ -55,4 +56,9 @@ extension View {
     func detailDrawer<Item: Identifiable & Equatable, C: View>(item: Binding<Item?>, width: CGFloat = 420, @ViewBuilder content: @escaping (Item) -> C) -> some View {
         modifier(DetailDrawer(item: item, width: width, panel: content))
     }
+}
+
+extension EnvironmentValues {
+    /// True while something above the screen (the command palette) owns Escape, so drawers do not close under it.
+    @Entry var cancelShortcutBlocked = false
 }

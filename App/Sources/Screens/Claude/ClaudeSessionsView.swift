@@ -5,6 +5,8 @@ import VardisCore
 
 struct ClaudeSessionsView: View {
     @Environment(ClaudeModel.self) private var claude
+    @Environment(Navigation.self) private var nav
+    @FocusState private var searching: Bool
     @AppStorage(Pref.claudeGroupBy) private var groupBy = "project"
     @State private var query = ""
     @State private var hits: [SessionHit]?
@@ -56,7 +58,7 @@ struct ClaudeSessionsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 420)
+            sidebar.frame(width: 380)
             Rectangle().fill(Theme.separator).frame(width: 1)
             Group {
                 if let s = selected {
@@ -71,6 +73,8 @@ struct ClaudeSessionsView: View {
         }
         .background(Theme.window)
         .claudePresence("claude.sessions")
+        .onAppear(perform: takeHandOff)
+        .onChange(of: nav.selectedSessionID) { takeHandOff() }
         .task(id: query) {
             let q = query.trimmingCharacters(in: .whitespaces)
             guard !q.isEmpty else { hits = nil; return }
@@ -82,12 +86,26 @@ struct ClaudeSessionsView: View {
         }
     }
 
+    /// A session picked in the command palette: clear filters so it is in the list, then select it.
+    private func takeHandOff() {
+        guard let id = nav.selectedSessionID else { return }
+        nav.selectedSessionID = nil
+        query = ""
+        hits = nil
+        project = nil
+        account = nil
+        selection = id
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.textTertiary)
                 TextField("Search sessions", text: $query).textFieldStyle(.plain).font(.bodyV)
-                if let hits { Text("\(hits.count) \(hits.count == 1 ? "match" : "matches")").font(.captionV).foregroundStyle(Theme.textTertiary) }
+                    .focused($searching).screenSearchFocus($searching)
+                    .onExitCommand { if !query.isEmpty { query = "" } else { searching = false } }
+                if let hits { Text("\(hits.count) \(hits.count == 1 ? "match" : "matches")").font(.captionV).foregroundStyle(Theme.textTertiary).contentTransition(.numericText()) }
+                if query.isEmpty && !searching { Text("\u{2318}F").font(.captionV).foregroundStyle(Theme.textTertiary) }
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).foregroundStyle(Theme.textTertiary)
                 }
@@ -119,6 +137,7 @@ struct ClaudeSessionsView: View {
             }
             .controlSize(.small)
             IndexingLine()
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2, pinnedViews: []) {
                     ForEach(groups, id: \.key) { g in
@@ -131,10 +150,13 @@ struct ClaudeSessionsView: View {
                         .padding(.horizontal, 4).padding(.top, 14).padding(.bottom, 4)
                         ForEach(g.sessions.prefix(hits == nil ? 60 : 200)) { s in
                             SessionRow(session: s, hit: hits?.first { $0.sessionID == s.id }, showProject: grouping == "date", isSelected: s.id == selected?.id)
+                                .id(s.id)
                                 .onTapGesture { selection = s.id }
                         }
                     }
                 }
+            }
+            .onChange(of: selection) { if let selection { withAnimation(Motion.quick) { proxy.scrollTo(selection) } } }
             }
         }
         .padding(.horizontal, 16).padding(.top, 16)
@@ -249,15 +271,25 @@ private struct SessionReader: View {
         return parts.joined(separator: " \u{00B7} ")
     }
 
+    /// One row when it fits; a two-column grid in a narrow window, so labels never wrap letter by letter.
     private var linked: some View {
-        HStack(alignment: .top, spacing: 36) {
-            info("arrow.triangle.branch", "Branch", session.gitBranch ?? "–")
-            info("doc.text", "Files changed", "\(files) \(files == 1 ? "file" : "files")")
-            info("bubble.left.and.bubble.right", "Turns", "\(turns.count) \u{00B7} \(steps) steps")
-            info("cpu", "Model", ContextWindow.displayName(session.model))
-            if session.failedToolCalls > 0 { info("exclamationmark.triangle", "Failed tools", "\(session.failedToolCalls) of \(session.toolCalls)") }
-            Spacer()
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 32) {
+                linkedItems
+                Spacer(minLength: 0)
+            }
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 14) {
+                linkedItems
+            }
         }
+    }
+
+    @ViewBuilder private var linkedItems: some View {
+        info("arrow.triangle.branch", "Branch", session.gitBranch ?? "–")
+        info("doc.text", "Files changed", "\(files) \(files == 1 ? "file" : "files")")
+        info("bubble.left.and.bubble.right", "Turns", "\(turns.count) (\(steps) steps)")
+        info("cpu", "Model", ContextWindow.displayName(session.model))
+        if session.failedToolCalls > 0 { info("exclamationmark.triangle", "Failed tools", "\(session.failedToolCalls) of \(session.toolCalls)") }
     }
 
     private func info(_ symbol: String, _ label: String, _ value: String) -> some View {
@@ -267,7 +299,8 @@ private struct SessionReader: View {
                 Text(label)
             }
             .font(.captionV).foregroundStyle(Theme.textTertiary)
-            Text(value).font(.headlineV).foregroundStyle(Theme.text).lineLimit(1)
+            .lineLimit(1).fixedSize()
+            Text(value).font(.headlineV).foregroundStyle(Theme.text).lineLimit(1).fixedSize()
         }
     }
 

@@ -85,12 +85,10 @@ enum ClaudeFmt {
         return day(d) + " " + time(d)
     }
 
+    /// "45 s", "3 h 5 m", "12 d 9 h".
     static func elapsed(since d: Date?) -> String {
         guard let d else { return "" }
-        let s = max(0, Int(Date().timeIntervalSince(d)))
-        if s >= 3600 { return "\(s / 3600) h \((s % 3600) / 60) m" }
-        if s >= 60 { return "\(s / 60) m" }
-        return "\(s) s"
+        return DurationFmt.compact(Date().timeIntervalSince(d))
     }
 
     /// Fmt.tokens with a billions step: 28.4B, 412M, 9.8k.
@@ -200,20 +198,13 @@ struct IndexingLine: View {
     }
 }
 
-/// Empty state with a symbol and one or two lines.
+/// Empty state with a symbol and one or two lines. Same look as every other screen's `EmptyState`.
 struct ClaudeEmpty: View {
     let symbol: String
     let title: String
     let detail: String
 
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: symbol).font(.system(size: 26)).foregroundStyle(Theme.textTertiary)
-            Text(title).font(.headlineV).foregroundStyle(Theme.text)
-            Text(detail).font(.calloutV).foregroundStyle(Theme.textTertiary).multilineTextAlignment(.center).frame(maxWidth: 360)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+    var body: some View { EmptyState(symbol: symbol, title: title, detail: detail) }
 }
 
 /// Plain bordered button matching the design's secondary buttons.

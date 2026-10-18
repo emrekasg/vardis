@@ -9,9 +9,34 @@ struct StubSimctl: SimctlRunner {
     func unavailableDevicesJSON() async -> Data? { json }
 }
 
-struct StubDocker: DockerRunner {
-    var json: Data?
-    func systemDFJSON() async -> Data? { json }
+/// Answers `system df -v` with `json` and every other command with status 0. Records what ran;
+/// nothing ever reaches a real Docker engine.
+final class StubDocker: DockerRunner, @unchecked Sendable {
+    let json: Data?
+    var failing: Set<String> = []
+    private let lock = NSLock()
+    private var calls: [[String]] = []
+
+    init(json: Data?) { self.json = json }
+
+    var ran: [[String]] { lock.lock(); defer { lock.unlock() }; return calls }
+
+    func docker(_ arguments: [String], timeout: TimeInterval) async -> CommandOutput? {
+        guard let json else { return nil }
+        lock.withLock { calls.append(arguments) }
+        if arguments.starts(with: ["system", "df"]) { return CommandOutput(status: 0, stdout: json) }
+        if arguments.first == "inspect" {
+            return CommandOutput(status: 0, stdout: Data("c0ffee000001 2026-08-01T10:00:00.5Z\n".utf8))
+        }
+        if arguments.starts(with: ["image", "inspect"]) {
+            return CommandOutput(status: 0, stdout: Data("sha256:bbbb 0001-01-01 00:00:00 +0000 UTC\n".utf8))
+        }
+        if arguments.starts(with: ["volume", "inspect"]) {
+            return CommandOutput(status: 0, stdout: Data("pgdata 2026-07-01T00:00:00Z\n".utf8))
+        }
+        if arguments.contains(where: failing.contains) { return CommandOutput(status: 1, stdout: Data(), stderr: "Error response from daemon: conflict") }
+        return CommandOutput(status: 0, stdout: Data())
+    }
 }
 
 final class FakeHome {
@@ -61,9 +86,24 @@ let simJSON = """
 """.data(using: .utf8)!
 
 let dockerJSON = """
-{"Active":"1","Reclaimable":"1.5GB (75%)","Size":"2GB","TotalCount":"5","Type":"Images"}
-{"Active":"0","Reclaimable":"0B","Size":"0B","TotalCount":"0","Type":"Containers"}
-{"Active":"0","Reclaimable":"512.5kB","Size":"512.5kB","TotalCount":"3","Type":"Build Cache"}
+{"Images":[
+ {"Containers":"0","CreatedAt":"2026-01-02 10:00:00 +0300 +03","Digest":"","ID":"sha256:aaaa","Repository":"<none>","Tag":"<none>","Size":"2.08GB","UniqueSize":"2GB","SharedSize":"80MB"},
+ {"Containers":"0","CreatedAt":"2026-03-01 10:00:00 +0000 UTC","Digest":"sha256:dd","ID":"sha256:bbbb","Repository":"postgres","Tag":"15","Size":"400MB","UniqueSize":"N/A"},
+ {"Containers":"0","CreatedAt":"2026-03-01 10:00:00 +0000 UTC","Digest":"sha256:dd","ID":"sha256:bbbb","Repository":"postgres","Tag":"latest","Size":"400MB","UniqueSize":"N/A"},
+ {"Containers":"2","CreatedAt":"2026-03-01 10:00:00 +0000 UTC","Digest":"","ID":"sha256:cccc","Repository":"used","Tag":"1","Size":"1GB","UniqueSize":"1GB"}
+],
+"Containers":[
+ {"ID":"c0ffee000001","Names":"old-api","Image":"api:dev","State":"exited","Status":"Exited (0) 2 months ago","Size":"12MB","CreatedAt":"2026-07-01 10:00:00 +0000 UTC"},
+ {"ID":"c0ffee000002","Names":"web","Image":"web:dev","State":"running","Status":"Up","Size":"1MB","CreatedAt":"2026-07-01 10:00:00 +0000 UTC"}
+],
+"Volumes":[
+ {"Name":"pgdata","Links":"0","Size":"3GB"},
+ {"Name":"inuse","Links":"1","Size":"9GB"}
+],
+"BuildCache":[
+ {"ID":"x1","InUse":"false","Shared":"false","Size":"500MB","LastUsedAt":"2026-01-01 09:00:00.12 +0000 UTC","CreatedAt":"2026-01-01 09:00:00 +0000 UTC"},
+ {"ID":"x2","InUse":"false","Shared":"true","Size":"100MB","LastUsedAt":"2099-01-01 09:00:00 +0000 UTC","CreatedAt":"2026-01-01 09:00:00 +0000 UTC"}
+]}
 """.data(using: .utf8)!
 
 func buildHome() throws -> FakeHome {
@@ -110,7 +150,7 @@ func group(_ groups: [CleanupGroup], _ c: CleanupCategory) -> CleanupGroup? { gr
 @Test func groupsAndDefaults() async throws {
     let h = try buildHome()
     let groups = await scanner(h).scan()
-    #expect(groups.map(\.category) == [.xcode, .simulators, .nodeModules, .docker, .packageCaches])
+    #expect(groups.map(\.category) == [.xcode, .simulators, .nodeModules, .packageCaches, .dockerImages, .dockerBuildCache, .dockerContainers, .dockerVolumes])
 
     let xcode = try #require(group(groups, .xcode))
     let byTitle = Dictionary(uniqueKeysWithValues: xcode.items.map { ($0.title, $0) })
@@ -160,14 +200,123 @@ func group(_ groups: [CleanupGroup], _ c: CleanupCategory) -> CleanupGroup? { gr
     #expect(found.allSatisfy { $0.pathComponents.filter { $0 == "node_modules" }.count == 1 })
 }
 
-@Test func dockerIsAdvisory() async throws {
+@Test func dockerUnusedObjects() async throws {
     let h = try buildHome()
-    let groups = await scanner(h, enabled: [.docker]).scan()
-    let docker = try #require(group(groups, .docker))
-    #expect(docker.items.map(\.title) == ["Images", "Build Cache"]) // 0 B Containers dropped
-    #expect(docker.items[0].sizeBytes == 1_500_000_000)
-    #expect(docker.items[1].sizeBytes == 512_500)
-    #expect(docker.items.allSatisfy { $0.urls.isEmpty && $0.isAdvisory && $0.advisoryCommand == "docker system prune" && !$0.selectedByDefault })
+    let all: Set<CleanupCategory> = [.dockerImages, .dockerBuildCache, .dockerContainers, .dockerVolumes]
+    let groups = await scanner(h, enabled: all).scan()
+    let images = try #require(group(groups, .dockerImages)).items
+    #expect(images.count == 2) // the image a container uses is not offered
+    let dangling = try #require(images.first { $0.title.hasPrefix("Untagged") })
+    #expect(dangling.selectedByDefault && dangling.sizeBytes == 2_000_000_000 && dangling.docker?.refs == ["sha256:aaaa"])
+    let pg = try #require(images.first { $0.title.contains("postgres") })
+    #expect(!pg.selectedByDefault && pg.safety == .redownloads && pg.isUpperBound)
+    #expect(Set(pg.docker?.refs ?? []) == ["postgres:15", "postgres:latest"])
+    #expect(pg.docker?.arguments.first == "rmi")
+
+    let containers = try #require(group(groups, .dockerContainers)).items
+    #expect(containers.map(\.title) == ["old-api"]) // running one is skipped
+    #expect(containers[0].safety == .reviewFirst && !containers[0].selectedByDefault)
+    #expect(containers[0].lastUsed == DockerScan.parseISO("2026-08-01T10:00:00.5Z"))
+    #expect(containers[0].detail.contains("not run for"))
+
+    let volumes = try #require(group(groups, .dockerVolumes)).items
+    #expect(volumes.map(\.title) == ["pgdata"])
+    #expect(volumes[0].safety == .notRebuildable && !volumes[0].selectedByDefault && volumes[0].detail.hasPrefix("Created"))
+
+    let cache = try #require(group(groups, .dockerBuildCache)).items
+    let old = try #require(cache.first { $0.id == "docker-buildcache:old" })
+    #expect(old.selectedByDefault && old.sizeBytes == 500_000_000 && old.docker?.arguments == ["builder", "prune", "-f", "--filter", "until=720h"])
+    #expect(cache.first { $0.id == "docker-buildcache:recent" }?.selectedByDefault == false)
+    #expect(groups.flatMap(\.items).allSatisfy { $0.urls.isEmpty && $0.isPermanent && !$0.isAdvisory })
+}
+
+@Test func dockerRemovalUsesTheCLIAndNeverTheTrash() async throws {
+    let h = try buildHome()
+    let stub = StubDocker(json: dockerJSON)
+    stub.failing = ["postgres:15"]
+    let log = TrashLog()
+    let config = CleanupConfig(home: h.home, projectRoots: [], enabled: [.dockerImages, .dockerBuildCache, .dockerContainers, .dockerVolumes])
+    let s = CleanupScanner(config: config, simctl: StubSimctl(json: nil), docker: stub, trasher: { log.add($0) })
+    let items = await s.scan().flatMap(\.items)
+    let r = await s.remove(items)
+    #expect(log.all.isEmpty)
+    let removals = stub.ran.filter { !$0.contains("df") && !$0.contains("inspect") }
+    // Containers before images; one full prune covers both build cache items.
+    #expect(removals.first == ["rm", "c0ffee000001"])
+    #expect(removals.filter { $0.first == "builder" } == [["builder", "prune", "-f"]])
+    #expect(removals.contains(["volume", "rm", "pgdata"]))
+    #expect(r.failures.map(\.itemID) == ["docker-image:sha256:bbbb"])
+    #expect(r.permanentlyRemoved == items.count - 1 && r.trashed.isEmpty)
+    // The Trash path refuses Docker items outright.
+    let t = await s.trash(items)
+    #expect(t.moved == 0 && t.failures.count == items.count)
+}
+
+@Test func goDateParsing() {
+    let d = DockerScan.parseGoDate("2026-10-16 21:23:30 +0300 +03")
+    #expect(d == DockerScan.parseISO("2026-10-16T18:23:30Z"))
+    #expect(DockerScan.parseGoDate("2026-04-10 09:49:56.347963988 +0000 UTC") != nil)
+    #expect(DockerScan.parseGoDate("0001-01-01 00:00:00 +0000 UTC") == nil)
+}
+
+@Test func newPathRulesAndBuildFolders() async throws {
+    let h = try FakeHome()
+    try h.file("Library/Caches/org.swift.swiftpm/repositories/x", bytes: 9_000)
+    try h.file("go/pkg/mod/cache/x", bytes: 9_000)
+    try h.file("Library/Caches/JetBrains/IntelliJIdea2026.1/index/x", bytes: 9_000)
+    try h.file("Library/Application Support/Code/CachedData/x", bytes: 9_000)
+    try h.file(".android/avd/Pixel_8.avd/userdata.img", bytes: 9_000)
+    try h.file("Library/Developer/Xcode/UserData/Previews/x", bytes: 9_000)
+    // Projects: a Rust crate, a JS app with ignored dist and a non-ignored build folder.
+    try h.file("code/crate/Cargo.toml", bytes: 10, age: 60)
+    try h.file("code/crate/target/debug/x", bytes: 20_000, age: 60)
+    try h.file("code/crate/.git/logs/HEAD", bytes: 10, age: 60)
+    try h.file("code/web/package.json", bytes: 10, age: 60)
+    try h.file("code/web/.gitignore", bytes: 0, age: 60)
+    try "/dist\nnode_modules/\n".write(to: h.home.appendingPathComponent("code/web/.gitignore"), atomically: true, encoding: .utf8)
+    try h.file("code/web/dist/app.js", bytes: 20_000, age: 60)
+    try h.file("code/web/build/script.sh", bytes: 20_000, age: 60)
+    for d in ["code/crate/.git/logs", "code/crate/.git", "code/crate", "code/web", "code/crate/target", "code/web/dist", "code/web/build"] { try h.setAge(h.home.appendingPathComponent(d), days: 60) }
+    try h.setAge(h.home.appendingPathComponent("code/web/.gitignore"), days: 60)
+
+    let config = CleanupConfig(home: h.home, projectRoots: [h.home.appendingPathComponent("code")], enabled: CleanupConfig.defaultEnabled)
+    let groups = await CleanupScanner(config: config, simctl: StubSimctl(json: nil), docker: StubDocker(json: nil)).scan()
+    let caches = try #require(group(groups, .packageCaches)).items
+    #expect(caches.first { $0.title == "SwiftPM" }?.safety == .redownloads)
+    let go = try #require(caches.first { $0.title == "Go modules" })
+    #expect(go.isAdvisory && go.urls.isEmpty && go.sizeBytes > 0)
+    let ide = try #require(group(groups, .ideCaches)).items
+    #expect(Set(ide.map(\.title)) == ["IntelliJIdea2026.1", "VS Code · CachedData", "Pixel 8"])
+    #expect(ide.first { $0.title == "Pixel 8" }?.safety == .reviewFirst)
+    #expect(group(groups, .xcode)?.items.first?.title == "Xcode Previews")
+
+    let builds = try #require(group(groups, .buildFolders)).items
+    #expect(Set(builds.map(\.title)) == ["crate/target", "web/dist"]) // build/ is not git-ignored
+    let target = try #require(builds.first { $0.title == "crate/target" })
+    #expect(target.selectedByDefault && target.projectRoot?.hasSuffix("code/crate") == true && target.projectActive != nil)
+    #expect(builds.first { $0.title == "web/dist" }?.selectedByDefault == false)
+}
+
+@Test func putBackRestoresTrashedItems() async throws {
+    let h = try buildHome()
+    let bin = h.root.appendingPathComponent("FakeTrash")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    let config = CleanupConfig(home: h.home, projectRoots: [], enabled: [.packageCaches])
+    let s = CleanupScanner(config: config, simctl: StubSimctl(json: nil), docker: StubDocker(json: nil), trashTo: { url in
+        let dest = bin.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.moveItem(at: url, to: dest)
+        return dest
+    })
+    let items = await s.scan().flatMap(\.items).filter(\.selectedByDefault)
+    let r = await s.trash(items)
+    #expect(r.trashed.count == items.count && !items.isEmpty)
+    for i in items { #expect(!FileManager.default.fileExists(atPath: i.urls[0].path)) }
+    // Something new took one place: that one stays in the Trash.
+    let blocked = r.trashed[0]
+    try FileManager.default.createDirectory(at: blocked.original, withIntermediateDirectories: true)
+    let back = await s.putBack(r.trashed)
+    #expect(back.restored.count == r.trashed.count - 1 && back.failures.count == 1)
+    for e in back.restored { #expect(FileManager.default.fileExists(atPath: e.original.path)) }
 }
 
 @Test func runnersAbsentSkipSilently() async throws {
@@ -240,17 +389,17 @@ final class TrashLog: @unchecked Sendable {
         CleanupItem(id: "y", category: .largeOldFiles, title: "y", detail: "", urls: [escape], sizeBytes: 1, lastUsed: nil, safety: .reviewFirst, selectedByDefault: true),
         CleanupItem(id: "z", category: .largeOldFiles, title: "z", detail: "", urls: [h.home], sizeBytes: 1, lastUsed: nil, safety: .reviewFirst, selectedByDefault: true),
     ]
-    let docker = all.filter(\.isAdvisory)
+    let docker = all.filter { $0.isAdvisory || $0.isPermanent }
     let result = await s.trash(selected + evil + docker)
 
-    let expectedMoved = selected.filter { !$0.isAdvisory }
+    let expectedMoved = selected.filter { !$0.isAdvisory && !$0.isPermanent }
     #expect(result.moved == expectedMoved.count)
     #expect(result.bytes == expectedMoved.reduce(0) { $0 + $1.sizeBytes })
     #expect(Set(log.all.map(\.path)) == Set(expectedMoved.flatMap(\.urls).map(\.path)))
     #expect(Set(result.failures.map(\.itemID)) == Set(["x", "y", "z"] + docker.map(\.id)))
     #expect(FileManager.default.fileExists(atPath: outsideFile.path))
     // Unselected items stay.
-    for item in all where !item.selectedByDefault && !item.isAdvisory {
+    for item in all where !item.selectedByDefault && !item.isAdvisory && !item.isPermanent {
         #expect(FileManager.default.fileExists(atPath: item.urls[0].path))
     }
 }
@@ -279,7 +428,7 @@ final class TrashLog: @unchecked Sendable {
 @Test(.enabled(if: ProcessInfo.processInfo.environment["VARDIS_REAL_HOME_SCAN"] == "1"))
 func realHomeScanTiming() async throws {
     let home = FileManager.default.homeDirectoryForCurrentUser
-    let config = CleanupConfig(home: home, projectRoots: [home], enabled: Set(CleanupCategory.allCases))
+    let config = CleanupConfig(home: home, projectRoots: [home], enabled: Set(CleanupCategory.current))
     let s = CleanupScanner(config: config) { _ in throw CocoaError(.featureUnsupported) } // never trashes
     let clock = ContinuousClock()
     let start = clock.now

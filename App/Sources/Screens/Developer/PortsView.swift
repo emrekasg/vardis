@@ -11,11 +11,12 @@ struct PortsView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(model.serverCount == 1 ? "1 server" : "\(model.serverCount) servers").font(.titleV).foregroundStyle(Theme.text)
+                    .contentTransition(.numericText()).motion(Motion.quick, value: model.serverCount)
                 Text("listening on \(model.portCount == 1 ? "1 port" : "\(model.portCount) ports"), grouped by project folder")
                     .font(.calloutV).foregroundStyle(Theme.textTertiary)
                 Spacer()
             }
-            .padding(.horizontal, 28).padding(.top, 20).padding(.bottom, 12)
+            .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 14)
             Hairline()
 
             if model.hasScanned && model.groups.isEmpty {
@@ -28,12 +29,16 @@ struct PortsView: View {
                         ForEach(model.groups) { group in
                             ProjectHeader(group: group)
                             ForEach(group.servers) { row in
-                                ServerRowView(row: row, model: model)
-                                Hairline().padding(.leading, 28)
+                                VStack(spacing: 0) {
+                                    ServerRowView(row: row, model: model)
+                                    Hairline().padding(.leading, 28)
+                                }
+                                .transition(.row)
                             }
                         }
                     }
                     .padding(.bottom, 20)
+                    .animatesRows(model.groups.flatMap { $0.servers.map(\.id) })
                 }
             }
         }
@@ -135,7 +140,9 @@ private struct ServerRowView: View {
             }
             .frame(width: PortsColumns.uptime, alignment: .trailing)
             Text(Fmt.percent(p.cpu)).font(.numeric).foregroundStyle(Theme.textSecondary).frame(width: PortsColumns.cpu, alignment: .trailing)
+                .contentTransition(.numericText()).motion(Motion.value, value: p.cpu)
             Text(Fmt.bytes(p.memory)).font(.numeric).foregroundStyle(Theme.text).frame(width: PortsColumns.memory, alignment: .trailing)
+                .contentTransition(.numericText()).motion(Motion.value, value: p.memory)
 
             HStack(spacing: 2) {
                 if let port = httpPort {
@@ -220,12 +227,5 @@ struct EmptyDeveloperState: View {
     let title: String
     let message: String
 
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: symbol).font(.system(size: 28)).foregroundStyle(Theme.textTertiary)
-            Text(title).font(.headlineV).foregroundStyle(Theme.text)
-            Text(message).font(.calloutV).foregroundStyle(Theme.textTertiary).multilineTextAlignment(.center).frame(maxWidth: 380)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+    var body: some View { EmptyState(symbol: symbol, title: title, detail: message) }
 }

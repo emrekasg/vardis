@@ -5,7 +5,7 @@ import VardisCore
 
 struct OnboardingView: View {
     let finish: () -> Void
-    @State private var step = 1
+    @State private var step: Int
     @AppStorage(Pref.openAtLogin) private var openAtLogin = true
     @AppStorage(Pref.menuCPU) private var menuCPU = true
     @AppStorage(Pref.menuMemory) private var menuMemory = true
@@ -15,6 +15,13 @@ struct OnboardingView: View {
     @AppStorage(Pref.claudeSearchIndex) private var searchIndex = true
     @AppStorage(Pref.autoSwitch) private var autoSwitch = false
     @State private var notificationsAllowed = false
+    @State private var forward = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(initialStep: Int = 1, finish: @escaping () -> Void) {
+        self.finish = finish
+        _step = State(initialValue: initialStep)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,22 +34,32 @@ struct OnboardingView: View {
                 default: ready
                 }
             }
-            .padding(.horizontal, 56).padding(.top, 44)
+            .padding(.horizontal, 56).padding(.top, 48)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .id(step)
+            .transition(reduceMotion ? .opacity : .asymmetric(
+                insertion: .opacity.combined(with: .offset(x: forward ? 16 : -16)),
+                removal: .opacity))
+            .clipped()
+            .motion(Motion.screen, value: step)
             Hairline()
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
                     ForEach(1...5, id: \.self) { i in
-                        Capsule().fill(i == step ? Theme.accent : Theme.raised).frame(width: i == step ? 18 : 6, height: 6)
+                        Capsule().fill(i == step ? Theme.accent : i < step ? Theme.accent.opacity(0.35) : Theme.raised)
+                            .frame(width: i == step ? 18 : 6, height: 6)
                     }
                 }
+                .motion(Motion.travel, value: step)
+                .accessibilityElement().accessibilityLabel("Step \(step) of 5")
                 Spacer()
                 if step == 1 {
                     Text("Free forever. Nothing leaves your Mac.").font(.calloutV).foregroundStyle(Theme.textTertiary)
                 }
-                if step > 1 && step < 5 { Button("Back") { step -= 1 } }
-                Button(primaryTitle) { step < 5 ? (step += 1) : finish() }
+                if step > 1 && step < 5 { Button("Back") { forward = false; step -= 1 }.keyboardShortcut(.cancelAction) }
+                Button(primaryTitle) { forward = true; step < 5 ? (step += 1) : finish() }
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
             }
             .padding(.horizontal, 24).padding(.vertical, 14)
         }

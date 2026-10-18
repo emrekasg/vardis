@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import UserNotifications
 import VardisCleanup
 import VardisCore
 import VardisStore
@@ -22,6 +23,35 @@ final class CleanupModel {
     private(set) var isScanning = false
     private(set) var volume: VolumeInfo?
     private(set) var lastTrash: TrashResult?
+    /// The last cleanup, kept on disk so "Put back" survives a relaunch.
+    private(set) var lastCleanup: LastCleanup?
+    private(set) var putBackResult: PutBackResult?
+    var viewMode: ViewMode = ViewMode(rawValue: UserDefaults.standard.string(forKey: "cleanup.viewMode") ?? "") ?? .byKind {
+        didSet { UserDefaults.standard.set(viewMode.rawValue, forKey: "cleanup.viewMode") }
+    }
+    var expandedProjects: Set<String> = []
+
+    enum ViewMode: String, CaseIterable { case byKind, byProject }
+
+    /// What the last cleanup did. Trash moves can be put back; Docker removals cannot.
+    struct LastCleanup: Codable, Sendable, Equatable {
+        var date: Date
+        var trashed: [TrashedEntry]
+        var trashedBytes: UInt64
+        var permanentCount: Int
+        var permanentBytes: UInt64
+    }
+
+    // Reminder (opt-in): notify when the safe default selection grows past a threshold.
+    static let reminderKey = "cleanup.reminder"
+    static let reminderGBKey = "cleanup.reminderGB"
+    static let reminderLastKey = "cleanup.reminderLastAt"
+    var reminderEnabled: Bool = UserDefaults.standard.bool(forKey: CleanupModel.reminderKey) {
+        didSet { UserDefaults.standard.set(reminderEnabled, forKey: Self.reminderKey); if reminderEnabled { requestNotificationPermission() } }
+    }
+    var reminderGB: Double = (UserDefaults.standard.object(forKey: CleanupModel.reminderGBKey) as? Double) ?? 20 {
+        didSet { UserDefaults.standard.set(reminderGB, forKey: Self.reminderGBKey) }
+    }
     /// App Store edition: no folders granted yet.
     private(set) var needsFolderAccess = false
     private(set) var grantedFolders: [URL] = []
@@ -42,6 +72,11 @@ final class CleanupModel {
     func start() {
         guard !started else { return }
         started = true
+        let url = Self.supportURL("last-cleanup.json")
+        Task.detached(priority: .utility) {
+            guard let d = try? Data(contentsOf: url), let c = try? JSONDecoder().decode(LastCleanup.self, from: d) else { return }
+            await MainActor.run { [weak self] in if self?.lastCleanup == nil { self?.lastCleanup = c } }
+        }
         #if APPSTORE
         grantedFolders = Self.resolveBookmarks()
         needsFolderAccess = grantedFolders.isEmpty
@@ -64,13 +99,35 @@ final class CleanupModel {
         if let r = u.result { result = r }
         if let v = u.volume { volume = v }
         isScanning = u.scanning
+        if u.result != nil, !u.scanning { remindIfNeeded() }
+    }
+
+    /// What the default selection frees: only items Vardis would tick on its own.
+    var defaultReclaimable: UInt64 {
+        groups.flatMap(\.items).filter { $0.selectedByDefault && !$0.isAdvisory }.reduce(0) { $0 + $1.sizeBytes }
+    }
+
+    private func remindIfNeeded() {
+        let d = UserDefaults.standard
+        guard reminderEnabled, Double(defaultReclaimable) >= reminderGB * 1e9 else { return }
+        let last = d.object(forKey: Self.reminderLastKey) as? Date ?? .distantPast
+        guard Date().timeIntervalSince(last) > 3 * 86_400 else { return }
+        d.set(Date(), forKey: Self.reminderLastKey)
+        let content = UNMutableNotificationContent()
+        content.title = "\(Fmt.bytes(defaultReclaimable)) of developer files can go"
+        content.body = "Disk Cleanup has build products and caches that tools make again. Nothing moves until you open it and confirm."
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "cleanup.reminder", content: content, trigger: nil))
+    }
+
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { _, _ in }
     }
 
     /// Full rescan on request. Never blocks: results stay on screen until the new ones land.
     func rescan() {
         guard let engine else { return }
         isScanning = true
-        Task.detached(priority: .utility) { await engine.fullScan() }
+        Task.detached(priority: .userInitiated) { await engine.fullScan(userInitiated: true) }
     }
 
     // MARK: Selection
@@ -87,15 +144,41 @@ final class CleanupModel {
 
     enum Check { case on, off, mixed }
 
-    func check(_ g: CleanupGroup) -> Check {
-        let selectable = g.items.filter { !$0.isAdvisory }
+    func check(_ g: CleanupGroup) -> Check { check(g.items) }
+
+    func check(_ items: [CleanupItem]) -> Check {
+        let selectable = items.filter { !$0.isAdvisory }
         let n = selectable.filter(isSelected).count
         return n == 0 ? .off : (n == selectable.count ? .on : .mixed)
     }
 
-    func toggle(_ g: CleanupGroup) {
-        let on = check(g) != .on
-        for i in g.items where !i.isAdvisory { selectionOverrides[i.id] = on }
+    func toggle(_ g: CleanupGroup) { toggle(items: g.items) }
+
+    func toggle(items: [CleanupItem]) {
+        let on = check(items) != .on
+        for i in items where !i.isAdvisory { selectionOverrides[i.id] = on }
+    }
+
+    // MARK: Projects
+
+    struct ProjectGroup: Identifiable, Sendable {
+        var id: String { root }
+        var root: String
+        var name: String
+        var items: [CleanupItem]
+        var lastActive: Date?
+        var totalBytes: UInt64 { items.reduce(0) { $0 + $1.sizeBytes } }
+    }
+
+    /// Items that belong to a project folder (node_modules, build folders, DerivedData), per project, largest first.
+    var projects: [ProjectGroup] {
+        var byRoot: [String: [CleanupItem]] = [:]
+        for i in groups.flatMap(\.items) { if let r = i.projectRoot { byRoot[r, default: []].append(i) } }
+        return byRoot.map { root, items in
+            ProjectGroup(root: root, name: (root as NSString).lastPathComponent, items: items.sorted { $0.sizeBytes > $1.sizeBytes },
+                         lastActive: items.compactMap { $0.projectActive ?? $0.lastUsed }.max())
+        }
+        .sorted { $0.totalBytes > $1.totalBytes }
     }
 
     var selectedItems: [CleanupItem] { groups.flatMap(\.items).filter(isSelected) }
@@ -111,15 +194,57 @@ final class CleanupModel {
         NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
-    /// Moves the items to the Trash and drops them from the list without a rescan.
-    func trash(_ items: [CleanupItem]) async {
+    /// Moves files to the Trash and has Docker remove Docker items, then drops them from the list without a rescan.
+    func remove(_ items: [CleanupItem]) async {
         guard let engine else { return }
-        let r = await engine.trash(items)
+        let r = await engine.remove(items)
         lastTrash = r
+        putBackResult = nil
         for id in r.movedIDs { selectionOverrides[id] = nil }
+        let moved = Set(r.movedIDs)
+        let permanent = items.filter { $0.isPermanent && moved.contains($0.id) }
+        if !r.trashed.isEmpty || !permanent.isEmpty {
+            let c = LastCleanup(date: Date(), trashed: r.trashed,
+                                trashedBytes: items.filter { !$0.isPermanent && moved.contains($0.id) }.reduce(0) { $0 + $1.sizeBytes },
+                                permanentCount: permanent.count, permanentBytes: permanent.reduce(0) { $0 + $1.sizeBytes })
+            lastCleanup = c
+            save(c)
+        }
     }
 
-    func dismissTrashResult() { lastTrash = nil }
+    /// Moves the last cleanup's Trash items back to where they were. Docker removals cannot come back.
+    func putBack() async {
+        guard let engine, let c = lastCleanup, !c.trashed.isEmpty else { return }
+        let r = await engine.putBack(c.trashed)
+        putBackResult = r
+        lastTrash = nil
+        let left = c.trashed.filter { e in !r.restored.contains(e) }
+        var next = c
+        next.trashed = left
+        next.trashedBytes = left.reduce(0) { $0 + $1.bytes }
+        lastCleanup = left.isEmpty && c.permanentCount == 0 ? nil : next
+        save(lastCleanup)
+    }
+
+    func dismissTrashResult() { lastTrash = nil; putBackResult = nil }
+
+    func forgetLastCleanup() {
+        lastCleanup = nil
+        putBackResult = nil
+        save(nil)
+    }
+
+    private func save(_ c: LastCleanup?) {
+        let url = Self.supportURL("last-cleanup.json")
+        Task.detached(priority: .utility) {
+            if let c, let d = try? JSONEncoder().encode(c) {
+                try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? d.write(to: url, options: .atomic)
+            } else {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
 
     // MARK: App Store folder access
 
@@ -202,6 +327,9 @@ actor CleanupEngine {
         var scanning: Bool
     }
 
+    /// Bump when scan rules add or change categories, so the next launch measures again.
+    static let rulesVersion: Double = 3
+
     private var scanner: CleanupScanner
     private var config: CleanupConfig
     private let cacheURL: URL
@@ -221,6 +349,16 @@ actor CleanupEngine {
     }
 
     func start() async {
+        // Direct edition: add folders in the home that hold code (for example ~/work-repos), found off the main thread.
+        if config.allowedRoots == nil {
+            let found = CleanupConfig.discoverProjectRoots(home: config.home)
+            let known = Set(config.projectRoots.map(\.path))
+            let extra = found.filter { f in !known.contains(f.path) && !config.projectRoots.contains { f.path.hasPrefix($0.path + "/") } }
+            if !extra.isEmpty {
+                config.projectRoots += extra
+                scanner = CleanupScanner(config: config)
+            }
+        }
         cache = try? CleanupCacheStore(url: cacheURL)
         if let snap = try? await cache?.load(), !snap.items.isEmpty {
             current = Self.decode(snap)
@@ -230,8 +368,14 @@ actor CleanupEngine {
             publish(Update(result: nil, volume: Self.volume(), scanning: true))
         }
         startWatching()
-        let stale = lastFullScan.map { Date().timeIntervalSince($0) > CleanupModel.fullScanMaxAge } ?? true
-        if current == nil || stale { await fullScan() }
+        // A cache written by older rules lacks whole categories (Docker objects, build folders, ...).
+        let oldRules = ((try? await cache?.meta("rulesVersion")) ?? nil).map { $0 < Self.rulesVersion } ?? true
+        let stale = oldRules || (lastFullScan.map { Date().timeIntervalSince($0) > CleanupModel.fullScanMaxAge } ?? true)
+        if current == nil || stale {
+            // Let launch and the first minutes of work finish before walking the disk in the background.
+            try? await Task.sleep(for: .seconds(current == nil ? 60 : 180), tolerance: .seconds(20))
+            await fullScan()
+        }
     }
 
     func update(config: CleanupConfig) async {
@@ -254,16 +398,19 @@ actor CleanupEngine {
         watcher = w
     }
 
-    func fullScan() async {
+    func fullScan(userInitiated: Bool = false) async {
         guard !busy else { return }
         busy = true
         publish(Update(result: nil, volume: nil, scanning: true))
-        let r = await scanner.fullScan()
+        var fastConfig = config
+        fastConfig.sizingWorkers = ProcessInfo.processInfo.activeProcessorCount
+        let r = await (userInitiated ? CleanupScanner(config: fastConfig) : scanner).fullScan()
         current = r
         lastFullScan = r.scannedAt
         pending = []
         publish(Update(result: r, volume: Self.volume(), scanning: false))
         try? await cache?.save(items: Self.encode(r.items), units: Self.encodeUnits(r.units), replaceAll: true, fullScanAt: r.scannedAt)
+        try? await cache?.setMeta("rulesVersion", Self.rulesVersion)
         busy = false
         await drain()
     }
@@ -289,8 +436,15 @@ actor CleanupEngine {
         await drain()
     }
 
-    func trash(_ items: [CleanupItem]) async -> TrashResult {
-        let r = await scanner.trash(items)
+    func putBack(_ entries: [TrashedEntry]) async -> PutBackResult {
+        let r = await scanner.putBack(entries)
+        // Measure the restored folders now instead of waiting for FSEvents.
+        await changed(r.restored.map { ChangedPath(path: $0.original.deletingLastPathComponent().path, recursive: true) })
+        return r
+    }
+
+    func remove(_ items: [CleanupItem]) async -> TrashResult {
+        let r = await scanner.remove(items)
         if let c = current {
             current = c.removing(Set(r.movedIDs))
             publish(Update(result: current, volume: Self.volume(), scanning: busy))
@@ -316,8 +470,9 @@ actor CleanupEngine {
 
     private static func decode(_ snap: CleanupCacheStore.Snapshot) -> ScanResult {
         let dec = JSONDecoder()
-        let items = snap.items.compactMap { try? dec.decode(CleanupItem.self, from: $0.payload) }
-        let groups = CleanupCategory.allCases.compactMap { cat in
+        // The old single advisory Docker group is no longer shown.
+        let items = snap.items.compactMap { try? dec.decode(CleanupItem.self, from: $0.payload) }.filter { $0.category != .docker }
+        let groups = CleanupCategory.current.compactMap { cat in
             let list = items.filter { $0.category == cat }.sorted { $0.sizeBytes > $1.sizeBytes }
             return list.isEmpty ? nil : CleanupGroup(category: cat, items: list)
         }

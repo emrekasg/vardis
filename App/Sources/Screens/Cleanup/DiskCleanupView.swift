@@ -1,9 +1,11 @@
 import SwiftUI
 import VardisCleanup
 import VardisCore
+import VardisStore
 
 struct DiskCleanupView: View {
     @Environment(CleanupModel.self) private var model
+    @Environment(HistoryModel.self) private var history
     @State private var confirming = false
 
     var body: some View {
@@ -16,12 +18,16 @@ struct DiskCleanupView: View {
                         CleanupHeader()
                             .padding(.bottom, 22)
                         StorageBar()
-                            .padding(.bottom, 26)
+                            .padding(.bottom, 18)
+                        FreeSpaceTrend(points: history.freeSpace)
+                        LastCleanupBanner()
                         if model.groups.isEmpty {
                             EmptyCleanup()
                         } else {
-                            CleanupList()
+                            ViewModePicker().padding(.bottom, 12)
+                            if model.viewMode == .byKind { CleanupList() } else { ProjectList() }
                         }
+                        ReminderFooter().padding(.top, 28)
                     }
                     .padding(.horizontal, 40).padding(.top, 28).padding(.bottom, 24)
                 }
@@ -29,8 +35,14 @@ struct DiskCleanupView: View {
             }
         }
         .background(Theme.window)
-        .sheet(isPresented: $confirming) { TrashConfirmation(items: model.selectedItems) }
+        .sheet(isPresented: $confirming) { RemoveConfirmation(items: model.selectedItems) }
+        .task { await history.refreshFreeSpace() }
     }
+}
+
+/// "up to 1.2 GB" when the size may count data shared with other items.
+enum SizeText {
+    static func of(_ item: CleanupItem) -> String { item.isUpperBound ? "up to \(Fmt.bytes(item.sizeBytes))" : Fmt.bytes(item.sizeBytes) }
 }
 
 // MARK: Header
@@ -65,10 +77,14 @@ private struct CleanupHeader: View {
     private var explanation: String {
         let sel = model.selectedItems
         if sel.isEmpty { return "selected. Tick what can go; everything here was found in developer tool folders." }
-        if sel.contains(where: { $0.safety == .notRebuildable || $0.safety == .reviewFirst || $0.safety == .activeProject }) {
-            return "selected. Some of it does not come back on its own, so look through the ticked rows before moving them."
+        let upTo = sel.contains(where: \.isUpperBound) ? " Some sizes are upper bounds: shared layers and linked files free less." : ""
+        if sel.contains(where: \.isPermanent) {
+            return "selected. Docker items are removed for good, not moved to the Trash, so look through them first." + upTo
         }
-        return "can go to the Trash without breaking anything. Everything selected is rebuilt or downloaded again the next time a tool needs it."
+        if sel.contains(where: { $0.safety == .notRebuildable || $0.safety == .reviewFirst || $0.safety == .activeProject }) {
+            return "selected. Some of it does not come back on its own, so look through the ticked rows before moving them." + upTo
+        }
+        return "can go to the Trash without breaking anything. Everything selected is rebuilt or downloaded again the next time a tool needs it." + upTo
     }
 }
 
@@ -141,6 +157,7 @@ private struct StorageBar: View {
         }
     }
 
+    /// Docker data lives inside the engine's disk image, so it is counted with developer files only up to what the disk uses.
     private var segments: [Segment] {
         guard let v = model.volume else { return [] }
         let used = v.total > v.available ? v.total - v.available : 0
@@ -155,34 +172,151 @@ private struct StorageBar: View {
     }
 }
 
+// MARK: Free space trend
+
+private struct FreeSpaceTrend: View {
+    let points: [Point]
+
+    var body: some View {
+        if points.count >= 6, let first = points.first, let last = points.last {
+            let delta = last.avg - first.avg
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Free space").font(.headlineV).foregroundStyle(Theme.text)
+                    Text(caption(delta: delta, since: first.timestamp)).font(.captionV).foregroundStyle(Theme.textTertiary)
+                    Spacer()
+                }
+                TimeChart(times: points.map(\.timestamp),
+                          series: [ChartSeries(id: "Free", color: Theme.Metric.disk, values: points.map(\.avg))],
+                          maxValue: (points.map(\.avg).max() ?? 1) * 1.15,
+                          format: { Fmt.bytes(UInt64(max(0, $0))) },
+                          timeFormat: .dateTime.day().month(.abbreviated).hour())
+                    .frame(height: 64)
+            }
+            .padding(.bottom, 22)
+            .transition(.opacity)
+        }
+    }
+
+    private func caption(delta: Double, since: Date) -> String {
+        let days = max(1, Int(Date().timeIntervalSince(since) / 86_400))
+        let span = days >= 29 ? "last 30 days" : (days == 1 ? "since yesterday" : "last \(days) days")
+        if abs(delta) < 1e9 { return "\(span) · about the same" }
+        return "\(span) · \(delta < 0 ? "down" : "up") \(Fmt.bytes(UInt64(abs(delta))))"
+    }
+}
+
+// MARK: Last cleanup
+
+private struct LastCleanupBanner: View {
+    @Environment(CleanupModel.self) private var model
+    @State private var working = false
+
+    var body: some View {
+        if let c = model.lastCleanup, model.lastTrash == nil || model.putBackResult != nil {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "arrow.uturn.backward.circle").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).padding(.top, 1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title(c)).font(.headlineV).foregroundStyle(Theme.text)
+                    Text(detail(c)).font(.captionV).foregroundStyle(Theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if !c.trashed.isEmpty {
+                    Button(working ? "Putting back…" : "Put Back") {
+                        working = true
+                        Task { await model.putBack(); working = false }
+                    }
+                    .disabled(working)
+                }
+                Button { model.forgetLastCleanup() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
+                    .buttonStyle(.plain).foregroundStyle(Theme.textTertiary).help("Forget this cleanup")
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.separator))
+            .padding(.bottom, 22)
+            .transition(.opacity)
+        }
+    }
+
+    private func title(_ c: CleanupModel.LastCleanup) -> String {
+        let when = c.date.formatted(.relative(presentation: .named))
+        if let r = model.putBackResult, !r.restored.isEmpty {
+            return "Put back \(r.restored.count) \(r.restored.count == 1 ? "item" : "items")" + (r.failures.isEmpty ? "" : " · \(r.failures.count) could not")
+        }
+        return c.trashed.isEmpty ? "Last cleanup \(when)" : "Last cleanup \(when): \(Fmt.bytes(c.trashedBytes)) in the Trash"
+    }
+
+    private func detail(_ c: CleanupModel.LastCleanup) -> String {
+        var parts: [String] = []
+        if let f = model.putBackResult?.failures.first { parts.append("\(f.entry.title): \(f.reason)") }
+        if !c.trashed.isEmpty { parts.append("Put Back moves \(c.trashed.count == 1 ? "it" : "them") to where \(c.trashed.count == 1 ? "it was" : "they were"), if the place is still free.") }
+        if c.permanentCount > 0 {
+            parts.append("\(c.permanentCount) Docker \(c.permanentCount == 1 ? "item" : "items") (\(Fmt.bytes(c.permanentBytes))) were removed by Docker and cannot be put back.")
+        }
+        return parts.joined(separator: " ")
+    }
+}
+
+// MARK: View mode
+
+private struct ViewModePicker: View {
+    @Environment(CleanupModel.self) private var model
+
+    var body: some View {
+        @Bindable var m = model
+        HStack {
+            Picker("", selection: $m.viewMode) {
+                Text("By kind").tag(CleanupModel.ViewMode.byKind)
+                Text("By project").tag(CleanupModel.ViewMode.byProject)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            Spacer()
+        }
+    }
+}
+
 // MARK: List
 
-private struct CleanupList: View {
-    @Environment(CleanupModel.self) private var model
+enum CleanupColumns {
+    static let lastUsed: CGFloat = 122
+    static let safety: CGFloat = 150
+    static let size: CGFloat = 104
+}
+
+private struct ColumnHeader: View {
+    let first: String
+    let second: String
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Text("Item").frame(maxWidth: .infinity, alignment: .leading)
-                Text("Last used").frame(width: CleanupColumns.lastUsed, alignment: .leading)
+                Text(first).frame(maxWidth: .infinity, alignment: .leading)
+                Text(second).frame(width: CleanupColumns.lastUsed, alignment: .leading)
                 Text("Safety").frame(width: CleanupColumns.safety, alignment: .leading)
                 Text("Size").frame(width: CleanupColumns.size, alignment: .trailing)
             }
             .font(.captionStrongV).foregroundStyle(Theme.textTertiary)
             .padding(.horizontal, 8).padding(.bottom, 8)
             Hairline()
-            ForEach(model.groups) { g in
-                GroupSection(group: g)
+        }
+    }
+}
+
+private struct CleanupList: View {
+    @Environment(CleanupModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ColumnHeader(first: "Item", second: "Last used")
+            ForEach(Array(model.groups.enumerated()), id: \.element.id) { i, g in
+                GroupSection(group: g).staggeredAppear(i)
             }
         }
         .motion(Motion.screen, value: model.expanded)
     }
-}
-
-enum CleanupColumns {
-    static let lastUsed: CGFloat = 122
-    static let safety: CGFloat = 150
-    static let size: CGFloat = 90
 }
 
 private struct GroupSection: View {
@@ -198,27 +332,38 @@ private struct GroupSection: View {
             GroupRow(group: group, open: open)
             if open {
                 let items = showAll ? group.items : Array(group.items.prefix(Self.visibleLimit))
-                ForEach(items) { item in
-                    Hairline().padding(.leading, 44)
-                    ItemRow(item: item)
-                }
-                if group.items.count > Self.visibleLimit && !showAll {
-                    Hairline().padding(.leading, 44)
-                    let rest = group.items.dropFirst(Self.visibleLimit)
-                    Button { showAll = true } label: {
-                        HStack {
-                            Text("Show \(rest.count) more").font(.bodyV).foregroundStyle(Theme.accent)
-                            Spacer()
-                            Text(Fmt.bytes(rest.reduce(0) { $0 + $1.sizeBytes })).font(.numeric).foregroundStyle(Theme.textSecondary)
-                        }
-                        .padding(.leading, 72).padding(.trailing, 8).frame(height: 33).contentShape(Rectangle())
+                VStack(spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                        Hairline().padding(.leading, 44)
+                        ItemRow(item: item).staggeredAppear(i)
                     }
-                    .buttonStyle(.plain)
+                    if group.items.count > Self.visibleLimit && !showAll {
+                        Hairline().padding(.leading, 44)
+                        ShowMoreRow(rest: Array(group.items.dropFirst(Self.visibleLimit))) { showAll = true }
+                    }
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
             Hairline()
         }
-        .transition(.opacity)
+        .clipped()
+    }
+}
+
+private struct ShowMoreRow: View {
+    let rest: [CleanupItem]
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text("Show \(rest.count) more").font(.bodyV).foregroundStyle(Theme.accent)
+                Spacer()
+                Text(Fmt.bytes(rest.reduce(0) { $0 + $1.sizeBytes })).font(.numeric).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.leading, 72).padding(.trailing, 8).frame(height: 33).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -231,11 +376,7 @@ private struct GroupRow: View {
         let advisory = group.items.allSatisfy(\.isAdvisory)
         HStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textTertiary)
-                    .rotationEffect(.degrees(open ? 90 : 0))
-                    .motion(Motion.quick, value: open)
-                    .frame(width: 14)
+                Chevron(open: open)
                 if advisory {
                     Color.clear.frame(width: 16, height: 16)
                 } else {
@@ -251,7 +392,8 @@ private struct GroupRow: View {
                 if !open, let s = commonSafety { SafetyBadge(safety: s) } else { Color.clear.frame(height: 1) }
             }
             .frame(width: CleanupColumns.safety, alignment: .leading)
-            Text(Fmt.bytes(group.totalBytes)).font(.system(size: 13, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.text)
+            Text((group.items.contains(where: \.isUpperBound) ? "up to " : "") + Fmt.bytes(group.totalBytes))
+                .font(.system(size: 13, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.text)
                 .frame(width: CleanupColumns.size, alignment: .trailing)
         }
         .padding(.horizontal, 8)
@@ -264,12 +406,13 @@ private struct GroupRow: View {
     }
 
     private var summary: String {
-        if group.category == .docker { return "Docker's own command frees this; Vardis never touches its files" }
         let sel = model.selectedBytes(in: group)
         let n = group.items.count
-        if sel == 0 { return n == 1 ? "1 item, not selected" : "\(n) items, none selected" }
-        if sel == group.totalBytes { return n == 1 ? "selected" : "all \(n) selected" }
-        return "\(Fmt.bytes(sel)) of \(Fmt.bytes(group.totalBytes)) selected"
+        let base: String
+        if sel == 0 { base = n == 1 ? "1 item, not selected" : "\(n) items, none selected" }
+        else if sel == group.totalBytes { base = n == 1 ? "selected" : "all \(n) selected" }
+        else { base = "\(Fmt.bytes(sel)) of \(Fmt.bytes(group.totalBytes)) selected" }
+        return group.category.isDocker ? base + " · Docker removes these for good" : base
     }
 
     private var lastUsed: String {
@@ -286,16 +429,35 @@ private struct GroupRow: View {
         case .xcode: "hammer"
         case .simulators: "iphone"
         case .nodeModules: "folder"
-        case .docker: "shippingbox"
+        case .buildFolders: "shippingbox.and.arrow.backward"
+        case .docker, .dockerImages: "shippingbox"
+        case .dockerBuildCache: "square.stack.3d.up"
+        case .dockerContainers: "cube"
+        case .dockerVolumes: "cylinder"
         case .packageCaches: "archivebox"
+        case .ideCaches: "chevron.left.forwardslash.chevron.right"
+        case .backups: "externaldrive.badge.timemachine"
         case .largeOldFiles: "doc"
         }
+    }
+}
+
+private struct Chevron: View {
+    let open: Bool
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textTertiary)
+            .rotationEffect(.degrees(open ? 90 : 0))
+            .motion(Motion.quick, value: open)
+            .frame(width: 14)
     }
 }
 
 private struct ItemRow: View {
     @Environment(CleanupModel.self) private var model
     let item: CleanupItem
+    var showsKind = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -310,13 +472,13 @@ private struct ItemRow: View {
                     TriCheckbox(state: model.isSelected(item) ? .on : .off) { model.toggle(item) }
                 }
                 Text(title).font(.bodyV).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
-                Text(item.detail).font(.calloutV).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                Text(detail).font(.calloutV).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(item.lastUsed.map { LastUsed.text($0) } ?? (item.isAdvisory ? "" : "Unknown"))
                 .font(.calloutV).foregroundStyle(Theme.textSecondary).frame(width: CleanupColumns.lastUsed, alignment: .leading)
             SafetyBadge(safety: item.safety).frame(width: CleanupColumns.safety, alignment: .leading)
-            Text(Fmt.bytes(item.sizeBytes)).font(.numeric).foregroundStyle(Theme.text)
+            Text(SizeText.of(item)).font(.numeric).foregroundStyle(Theme.text)
                 .contentTransition(.numericText())
                 .motion(Motion.value, value: item.sizeBytes)
                 .frame(width: CleanupColumns.size, alignment: .trailing)
@@ -328,16 +490,99 @@ private struct ItemRow: View {
         .onTapGesture { model.toggle(item) }
         .contextMenu {
             if !item.urls.isEmpty { Button("Show in Finder") { model.showInFinder([item]) } }
+            if let ref = item.docker { Button("Copy Docker Command") { copy("docker " + ref.arguments.joined(separator: " ")) } }
         }
+        .help(item.urls.map { LastUsed.tilde($0.path) }.joined(separator: "\n"))
         .modifier(HoverHighlight())
-        .transition(.opacity)
     }
 
     private var title: String {
+        if showsKind, let u = item.urls.first {
+            return item.category == .xcode ? "DerivedData · \(item.title)" : u.lastPathComponent
+        }
         if item.category == .nodeModules, let u = item.urls.first { return LastUsed.tilde(u.deletingLastPathComponent().path) }
         return item.title
     }
+
+    private var detail: String { showsKind ? item.category.title : item.detail }
+
+    private func copy(_ s: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(s, forType: .string)
+    }
 }
+
+// MARK: By project
+
+private struct ProjectList: View {
+    @Environment(CleanupModel.self) private var model
+
+    var body: some View {
+        let projects = model.projects
+        VStack(alignment: .leading, spacing: 0) {
+            ColumnHeader(first: "Project", second: "Last active")
+            if projects.isEmpty {
+                Text("No project folders with build output were found in your project folders.")
+                    .font(.calloutV).foregroundStyle(Theme.textTertiary).padding(.vertical, 14).padding(.horizontal, 8)
+            }
+            ForEach(Array(projects.enumerated()), id: \.element.id) { i, p in
+                ProjectSection(project: p).staggeredAppear(i)
+            }
+        }
+        .motion(Motion.screen, value: model.expandedProjects)
+    }
+}
+
+private struct ProjectSection: View {
+    @Environment(CleanupModel.self) private var model
+    let project: CleanupModel.ProjectGroup
+
+    var body: some View {
+        let open = model.expandedProjects.contains(project.id)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Chevron(open: open)
+                    TriCheckbox(state: model.check(project.items)) { model.toggle(items: project.items) }
+                    Image(systemName: "folder").font(.system(size: 13)).foregroundStyle(Theme.textSecondary).frame(width: 18)
+                    Text(project.name).font(.headlineV).foregroundStyle(Theme.text).lineLimit(1)
+                    Text(LastUsed.tilde((project.root as NSString).deletingLastPathComponent)).font(.calloutV).foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(project.lastActive.map { LastUsed.text($0) } ?? "Unknown")
+                    .font(.calloutV).foregroundStyle(Theme.textSecondary).frame(width: CleanupColumns.lastUsed, alignment: .leading)
+                Group {
+                    if project.items.contains(where: { $0.safety == .activeProject }) { SafetyBadge(safety: .activeProject) } else { SafetyBadge(safety: .rebuildable) }
+                }
+                .frame(width: CleanupColumns.safety, alignment: .leading)
+                Text((project.items.contains(where: \.isUpperBound) ? "up to " : "") + Fmt.bytes(project.totalBytes))
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.text)
+                    .frame(width: CleanupColumns.size, alignment: .trailing)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 38)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if open { model.expandedProjects.remove(project.id) } else { model.expandedProjects.insert(project.id) }
+            }
+            .modifier(HoverHighlight())
+            if open {
+                VStack(spacing: 0) {
+                    ForEach(Array(project.items.enumerated()), id: \.element.id) { i, item in
+                        Hairline().padding(.leading, 44)
+                        ItemRow(item: item, showsKind: true).staggeredAppear(i)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            Hairline()
+        }
+        .clipped()
+    }
+}
+
+// MARK: Shared pieces
 
 struct SafetyBadge: View {
     let safety: Safety
@@ -367,6 +612,7 @@ struct TriCheckbox: View {
                 if state != .off {
                     Image(systemName: state == .on ? "checkmark" : "minus")
                         .font(.system(size: 9, weight: .heavy)).foregroundStyle(.white)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
             }
             .frame(width: 16, height: 16)
@@ -403,11 +649,34 @@ private struct EmptyCleanup: View {
         VStack(alignment: .leading, spacing: 6) {
             if model.result != nil {
                 Text("Nothing to clean up").font(.headlineV).foregroundStyle(Theme.text)
-                Text("No Xcode builds, simulators, node_modules or package caches worth moving were found.")
+                Text("No Xcode builds, simulators, build folders, package caches or unused Docker data worth removing were found.")
                     .font(.bodyV).foregroundStyle(Theme.textSecondary)
             }
         }
         .padding(.top, 8)
+    }
+}
+
+// MARK: Reminder
+
+private struct ReminderFooter: View {
+    @Environment(CleanupModel.self) private var model
+
+    var body: some View {
+        @Bindable var m = model
+        HStack(spacing: 8) {
+            Toggle(isOn: $m.reminderEnabled) {
+                Text("Remind me when more than").font(.calloutV).foregroundStyle(Theme.textSecondary)
+            }
+            .toggleStyle(.checkbox)
+            Picker("", selection: $m.reminderGB) {
+                ForEach([10.0, 20, 50, 100], id: \.self) { Text("\(Int($0)) GB").tag($0) }
+            }
+            .labelsHidden().fixedSize().controlSize(.small)
+            .disabled(!model.reminderEnabled)
+            Text("can go safely").font(.calloutV).foregroundStyle(Theme.textSecondary)
+            Spacer()
+        }
     }
 }
 
@@ -419,91 +688,151 @@ private struct ActionBar: View {
 
     var body: some View {
         let sel = model.selectedItems
+        let permanent = sel.filter(\.isPermanent).count
         VStack(spacing: 0) {
             Hairline()
             HStack(spacing: 14) {
                 Image(systemName: "trash").font(.system(size: 15)).foregroundStyle(Theme.textSecondary)
                 VStack(alignment: .leading, spacing: 2) {
                     if let r = model.lastTrash {
-                        Text(trashSummary(r)).font(.headlineV).foregroundStyle(r.failures.isEmpty ? Theme.text : Theme.orange)
-                        Text(r.failures.first.map { "\($0.url?.lastPathComponent ?? $0.itemID): \($0.reason)" } ?? "Find them in the Trash until you empty it.")
+                        Text(summary(r)).font(.headlineV).foregroundStyle(r.failures.isEmpty ? Theme.text : Theme.orange)
+                        Text(r.failures.first.map { "\(name($0.itemID)): \($0.reason)" } ?? (r.trashed.isEmpty ? "Docker freed the space." : "Find them in the Trash until you empty it, or put them back above."))
                             .font(.captionV).foregroundStyle(Theme.textTertiary).lineLimit(1)
                     } else {
                         Text("\(Fmt.bytes(model.selectedBytes)) selected in \(sel.count) \(sel.count == 1 ? "item" : "items")")
                             .font(.headlineV).foregroundStyle(Theme.text)
                             .contentTransition(.numericText())
-                        Text("Moved to the Trash, not deleted. Empty the Trash when you are sure.")
-                            .font(.captionV).foregroundStyle(Theme.textTertiary)
+                        Text(permanent > 0
+                             ? "Files go to the Trash. \(permanent) Docker \(permanent == 1 ? "item is" : "items are") removed by Docker, permanently."
+                             : "Moved to the Trash, not deleted. Empty the Trash when you are sure.")
+                            .font(.captionV).foregroundStyle(permanent > 0 ? Theme.orange : Theme.textTertiary)
                     }
                 }
                 Spacer()
                 Button("Show in Finder") { model.showInFinder(sel) }
-                    .disabled(sel.isEmpty)
-                Button("Move \(Fmt.bytes(model.selectedBytes)) to Trash") { model.dismissTrashResult(); confirming = true }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(sel.isEmpty)
-                    .keyboardShortcut(.delete, modifiers: .command)
+                    .disabled(!sel.contains { !$0.urls.isEmpty })
+                Button(permanent > 0 ? "Clean Up \(Fmt.bytes(model.selectedBytes))…" : "Move \(Fmt.bytes(model.selectedBytes)) to Trash…") {
+                    model.dismissTrashResult(); confirming = true
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(sel.isEmpty)
+                .keyboardShortcut(.delete, modifiers: .command)
             }
             .padding(.horizontal, 40).padding(.vertical, 14)
         }
         .background(Theme.surface)
     }
 
-    private func trashSummary(_ r: TrashResult) -> String {
-        let moved = "Moved \(Fmt.bytes(r.bytes)) in \(r.moved) \(r.moved == 1 ? "item" : "items") to the Trash"
-        return r.failures.isEmpty ? moved : moved + " · \(r.failures.count) could not move"
+    private func name(_ id: String) -> String {
+        model.groups.flatMap(\.items).first { $0.id == id }?.title ?? (id as NSString).lastPathComponent
+    }
+
+    private func summary(_ r: TrashResult) -> String {
+        let trashed = r.moved - r.permanentlyRemoved
+        var parts: [String] = []
+        if trashed > 0 { parts.append("Moved \(trashed) \(trashed == 1 ? "item" : "items") to the Trash") }
+        if r.permanentlyRemoved > 0 { parts.append("Docker removed \(r.permanentlyRemoved)") }
+        var s = parts.isEmpty ? "Nothing was removed" : parts.joined(separator: " · ") + " (\(Fmt.bytes(r.bytes)))"
+        if !r.failures.isEmpty { s += " · \(r.failures.count) could not" }
+        return s
     }
 }
 
-private struct TrashConfirmation: View {
+private struct RemoveConfirmation: View {
     @Environment(CleanupModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let items: [CleanupItem]
     @State private var working = false
 
     var body: some View {
+        let trash = items.filter { !$0.isPermanent }
+        let docker = items.filter(\.isPermanent)
         VStack(alignment: .leading, spacing: 14) {
-            Text("Move \(Fmt.bytes(items.reduce(0) { $0 + $1.sizeBytes })) to the Trash?").font(.titleV).foregroundStyle(Theme.text)
-            Text("These \(items.count) \(items.count == 1 ? "item moves" : "items move") to the Trash. Nothing is deleted until you empty it.")
-                .font(.bodyV).foregroundStyle(Theme.textSecondary)
+            Text(title(trash: trash, docker: docker)).font(.titleV).foregroundStyle(Theme.text)
             ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(items) { i in
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(i.category == .nodeModules ? LastUsed.tilde(i.urls.first?.deletingLastPathComponent().path ?? i.title) : i.title)
-                                    .font(.bodyV).foregroundStyle(Theme.text).lineLimit(1)
-                                Text(i.urls.map { LastUsed.tilde($0.path) }.joined(separator: ", "))
-                                    .font(.captionV).foregroundStyle(Theme.textTertiary).lineLimit(1).truncationMode(.middle)
-                            }
-                            Spacer()
-                            SafetyBadge(safety: i.safety)
-                            Text(Fmt.bytes(i.sizeBytes)).font(.numeric).foregroundStyle(Theme.text).frame(width: 74, alignment: .trailing)
-                        }
-                        .padding(.vertical, 7)
-                        Hairline()
+                VStack(alignment: .leading, spacing: 0) {
+                    if !trash.isEmpty {
+                        ConfirmSectionTitle(text: "Move to the Trash · \(trash.count)",
+                                     detail: "Nothing is deleted until you empty the Trash. Put Back returns them.", tone: Theme.textSecondary)
+                        ForEach(trash) { ConfirmRow(item: $0) }
+                    }
+                    if !docker.isEmpty {
+                        ConfirmSectionTitle(text: "Removed permanently by Docker · \(docker.count)",
+                                     detail: "Docker deletes these now. They do not go to the Trash and cannot be put back."
+                                        + (docker.contains { $0.docker?.kind == .volume } ? " A volume may hold a database." : ""),
+                                     tone: Theme.red)
+                            .padding(.top, trash.isEmpty ? 0 : 16)
+                        ForEach(docker) { ConfirmRow(item: $0) }
                     }
                 }
             }
-            .frame(maxHeight: 320)
+            .frame(maxHeight: 360)
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Move to Trash") {
+                Button(docker.isEmpty ? "Move to Trash" : (trash.isEmpty ? "Remove Permanently" : "Move to Trash and Remove")) {
                     working = true
                     Task {
-                        await model.trash(items)
+                        await model.remove(items)
                         dismiss()
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(docker.isEmpty ? nil : Theme.red)
                 .keyboardShortcut(.defaultAction)
                 .disabled(working)
             }
         }
         .padding(24)
-        .frame(width: 560)
+        .frame(width: 600)
         .background(Theme.window)
+    }
+
+    private func title(trash: [CleanupItem], docker: [CleanupItem]) -> String {
+        let total = Fmt.bytes(items.reduce(0) { $0 + $1.sizeBytes })
+        if docker.isEmpty { return "Move \(total) to the Trash?" }
+        if trash.isEmpty { return "Permanently remove \(total) of Docker data?" }
+        return "Clean up \(total)?"
+    }
+}
+
+private struct ConfirmSectionTitle: View {
+    let text: String
+    let detail: String
+    let tone: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(text).font(.headlineV).foregroundStyle(tone)
+            Text(detail).font(.captionV).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.bottom, 6)
+    }
+}
+
+private struct ConfirmRow: View {
+    let item: CleanupItem
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.category == .nodeModules ? LastUsed.tilde(item.urls.first?.deletingLastPathComponent().path ?? item.title) : item.title)
+                        .font(.bodyV).foregroundStyle(Theme.text).lineLimit(1)
+                    Text(subtitle).font(.captionV).foregroundStyle(Theme.textTertiary).lineLimit(1).truncationMode(.middle)
+                }
+                Spacer()
+                SafetyBadge(safety: item.safety)
+                Text(SizeText.of(item)).font(.numeric).foregroundStyle(Theme.text).frame(width: 96, alignment: .trailing)
+            }
+            .padding(.vertical, 7)
+            Hairline()
+        }
+    }
+
+    private var subtitle: String {
+        if let ref = item.docker { return "docker " + ref.arguments.joined(separator: " ") }
+        return item.urls.map { LastUsed.tilde($0.path) }.joined(separator: ", ")
     }
 }
 

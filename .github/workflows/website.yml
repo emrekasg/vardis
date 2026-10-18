@@ -29,7 +29,7 @@ jobs:
       - name: Check for third-party requests
         run: |
           # The site must load nothing from other origins.
-          if grep -nE '(src|href|url\()=?["'"'"'(]?https?://' website/*.html website/*.css \
+          if grep -nE '(src|href|url\()=?["'"'"'(]?https?://' website/*.html website/assets/css/*.css website/assets/js/*.js \
               | grep -vE 'https://(vardis\.app|github\.com)/'; then
             echo "Found an external resource reference." && exit 1
           fi

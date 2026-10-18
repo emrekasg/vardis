@@ -22,48 +22,111 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .about: "info.circle"
         }
     }
+
+    /// Words from each pane's rows, so searching "login" finds General.
+    var keywords: [String] {
+        switch self {
+        case .general: ["login", "dock", "appearance", "dark", "light", "shortcut", "units", "temperature", "updates"]
+        case .performance: ["sampling", "interval", "battery", "history", "memory"]
+        case .menuBar: ["cpu", "memory", "network", "battery", "disk", "status"]
+        case .alerts: ["notifications", "leak", "awake", "quiet", "limit"]
+        case .cleanup: ["xcode", "simulators", "node_modules", "caches", "trash", "large files"]
+        case .claude: ["sessions", "search", "terminal", "resume", "cost"]
+        case .privacy: ["retention", "history", "data"]
+        case .integrations: ["mcp", "server", "codex", "cursor"]
+        case .advanced: ["debug", "log", "onboarding"]
+        case .about: ["version", "website", "source"]
+        }
+    }
+}
+
+private struct SettingsSidebarRow: View {
+    let pane: SettingsPane
+    let isSelected: Bool
+    let pill: Namespace.ID
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: pane.symbol).font(.system(size: 13, weight: .medium)).frame(width: 16)
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.textSecondary)
+                Text(pane.rawValue).font(.bodyV).foregroundStyle(Theme.text)
+                Spacer()
+            }
+            .padding(.horizontal, 8).frame(height: 28)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.selected).matchedGeometryEffect(id: "pill", in: pill)
+                } else if hovering {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.selected.opacity(0.5))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Motion.quick, value: hovering)
+    }
 }
 
 struct SettingsView: View {
-    @State private var pane: SettingsPane = .general
+    @State private var pane: SettingsPane
     @State private var query = ""
+    @Namespace private var pill
+
+    init(initialPane: SettingsPane = .general) { _pane = State(initialValue: initialPane) }
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 1) {
                 Color.clear.frame(height: 40)
-                TextField("Search settings", text: $query).textFieldStyle(.roundedBorder).padding(.bottom, 10)
-                ForEach(SettingsPane.allCases.filter { query.isEmpty || $0.rawValue.localizedCaseInsensitiveContains(query) }) { p in
-                    Button { pane = p } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: p.symbol).frame(width: 16).foregroundStyle(pane == p ? Theme.accent : Theme.textSecondary)
-                            Text(p.rawValue).font(.bodyV).foregroundStyle(Theme.text)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 8).frame(height: 28)
-                        .background(pane == p ? Theme.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textTertiary)
+                    TextField("Search", text: $query).textFieldStyle(.plain).font(.bodyV)
+                        .onExitCommand { query = "" }
+                        .onSubmit { if let first = visiblePanes.first { pane = first } }
+                }
+                .padding(.horizontal, 8).frame(height: 26)
+                .background(Theme.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .padding(.horizontal, 6).padding(.bottom, 10)
+                ForEach(visiblePanes) { p in
+                    SettingsSidebarRow(pane: p, isSelected: pane == p, pill: pill) { pane = p }
+                }
+                if visiblePanes.isEmpty {
+                    Text("No matches").font(.calloutV).foregroundStyle(Theme.textTertiary).padding(.horizontal, 14).padding(.top, 4)
                 }
                 Spacer()
             }
             .padding(.horizontal, 10)
             .frame(width: 210)
             .background(Theme.sidebar)
+            .motion(Motion.travel, value: pane)
             Rectangle().fill(Theme.separator).frame(width: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if pane != .about { Text(pane.rawValue).font(.titleV).foregroundStyle(Theme.text) }
                     paneView
                 }
-                .padding(.horizontal, 32).padding(.vertical, 26)
+                .frame(maxWidth: 600, alignment: .leading)
+                .padding(.horizontal, 36).padding(.top, 40).padding(.bottom, 28)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .id(pane)
             .background(Theme.window)
         }
         .frame(width: 900, height: 660)
         .ignoresSafeArea()
+    }
+
+    /// Panes whose name, or a word that belongs to them, matches the search.
+    private var visiblePanes: [SettingsPane] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return SettingsPane.allCases }
+        return SettingsPane.allCases.filter { p in
+            p.rawValue.localizedCaseInsensitiveContains(q) || p.keywords.contains { $0.localizedCaseInsensitiveContains(q) }
+        }
     }
 
     @ViewBuilder private var paneView: some View {
@@ -138,7 +201,8 @@ private struct PerformancePane: View {
             measure("Interval", live.isFast ? "1 s" : "5 s", live.isFast ? "window open" : "window closed", true)
         }
         .padding(.vertical, 14)
-        .background(Theme.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.separator))
         Text("Vardis measures itself the same way it measures everything else.").font(.captionV).foregroundStyle(Theme.textTertiary)
         GroupBoxV(title: "Sampling") {
             FormRow(label: "When the window is closed", detail: "Menu bar and history only") {
@@ -162,7 +226,8 @@ private struct PerformancePane: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(k).font(.captionV).foregroundStyle(Theme.textTertiary)
             Text(v).font(.numericL).foregroundStyle(Theme.text)
-            Text(b).font(.captionV).foregroundStyle(ok ? Theme.green : Theme.orange)
+                .contentTransition(.numericText()).motion(Motion.value, value: v)
+            Text(b).font(.captionV).foregroundStyle(ok ? Theme.textTertiary : Theme.orange)
         }
         .padding(.leading, 16).frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -267,7 +332,7 @@ private struct PrivacyPane: View {
                 .font(.calloutV).foregroundStyle(Theme.text)
         }
         .padding(14)
-        .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         GroupBoxV(title: "History") {
             FormRow(label: "Keep history for") {
                 Picker("", selection: $retention) { Text("30 days").tag(30); Text("90 days").tag(90); Text("6 months").tag(180); Text("1 year").tag(365) }.labelsHidden().fixedSize()
@@ -309,7 +374,7 @@ private struct AboutPane: View {
             Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")").font(.calloutV).foregroundStyle(Theme.textSecondary)
             HStack(spacing: 8) {
                 Badge("Free forever", tone: .green)
-                Text("No account · no data collected").font(.calloutV).foregroundStyle(Theme.textTertiary)
+                Text("No account, and no data collected").font(.calloutV).foregroundStyle(Theme.textTertiary)
             }
             HStack {
                 Link("Website", destination: Brand.website)

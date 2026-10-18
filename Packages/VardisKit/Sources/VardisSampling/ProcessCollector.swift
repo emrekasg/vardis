@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import VardisCore
 
 /// Identity of one process instance. The start time keeps a reused pid from inheriting old counters.
@@ -14,6 +15,8 @@ final class ProcessRecord {
     var parentPID: Int32
     let name: String
     let path: String
+    /// Wall-clock start, from `pbi_start_tvsec`; nil when the kernel would not say.
+    let started: Date?
 
     // Raw counters from the previous sample.
     fileprivate var lastCPUTicks: UInt64 = 0
@@ -33,12 +36,13 @@ final class ProcessRecord {
     /// Owning app, resolved once per process instance by `AppGrouper`.
     var group: AppGroup?
 
-    init(pid: Int32, start: UInt64, parentPID: Int32, name: String, path: String) {
+    init(pid: Int32, start: UInt64, parentPID: Int32, name: String, path: String, started: Date? = nil) {
         self.pid = pid
         self.start = start
         self.parentPID = parentPID
         self.name = name
         self.path = path
+        self.started = started
     }
 
     var sample: ProcessSample {
@@ -173,7 +177,8 @@ final class ProcessCollector {
             if name.isEmpty { name = Self.string(from: bsd.pbi_comm) }
         }
         if name.isEmpty { name = "pid \(pid)" }
-        return ProcessRecord(pid: pid, start: start, parentPID: gotBSD ? Int32(bitPattern: bsd.pbi_ppid) : 0, name: name, path: path)
+        let started = gotBSD ? Date(timeIntervalSince1970: Double(bsd.pbi_start_tvsec) + Double(bsd.pbi_start_tvusec) / 1e6) : nil
+        return ProcessRecord(pid: pid, start: start, parentPID: gotBSD ? Int32(bitPattern: bsd.pbi_ppid) : 0, name: name, path: path, started: started)
     }
 
     /// The exec path stored at the start of KERN_PROCARGS2 (after argc). Runs once per new process.

@@ -154,3 +154,53 @@ extension HistoryStore {
 }
 
 func rowCounts(_ s: HistoryStore) async throws -> [Int64: Int] { try await s.debugRowCounts() }
+
+@Test func focusSpansRoundTripClippedAndPruned() async throws {
+    let store = try HistoryStore(url: nil)
+    let t = { (s: TimeInterval) in Date(timeIntervalSince1970: base + s) }
+    try await store.appendFocus([
+        FocusSpan(start: t(0), end: t(600), bundleID: "com.apple.Safari", name: "Safari"),
+        FocusSpan(start: t(600), end: t(600.5), bundleID: "x", name: "Blink"), // under a second: dropped
+        FocusSpan(start: t(700), end: t(1_000), bundleID: "com.apple.dt.Xcode", name: "Xcode"),
+    ])
+    let all = try await store.focus(from: t(300), to: t(800))
+    #expect(all.map(\.name) == ["Safari", "Xcode"])
+    #expect(all[0].start == t(300) && all[0].duration == 300 && all[1].end == t(800))
+    try await store.prune(retention: 0, now: t(650))
+    #expect(try await store.focus(from: t(0), to: t(2_000)).map(\.name) == ["Xcode"])
+}
+
+@Test func dailyStatsAggregatePerLocalDay() async throws {
+    let store = try HistoryStore(url: nil)
+    // Two days of minute points at cpu 0.2 and 0.6.
+    for d in 0..<2 {
+        for m in 0..<120 {
+            try await store.append(snapshot(at: base + Double(d) * 86_400 + Double(m) * 60, cpu: d == 0 ? 0.2 : 0.6, apps: 3))
+        }
+    }
+    let stats = try await store.dailyStats(from: Date(timeIntervalSince1970: base - 86_400), to: Date(timeIntervalSince1970: base + 3 * 86_400), utcOffset: 0)
+    #expect(stats.count == 2)
+    #expect(abs(stats[0].cpu - 0.2) < 1e-9 && abs(stats[1].cpu - 0.6) < 1e-9)
+    #expect(stats[0].recorded == 120) // raw tier: one second per row
+    #expect(stats[0].energyJoules > 0)
+}
+
+@Test func migratesSchema2ToSchema3() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vardis-hist-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("history.sqlite")
+    do {
+        let s = try HistoryStore(url: url)
+        try await s.append(snapshot(at: base, cpu: 0.3))
+    }
+    // Turn it back into a schema 2 file: drop what schema 3 added.
+    do {
+        let db = try Database(url: url)
+        try db.execute("DROP TABLE app_focus; ALTER TABLE history_points DROP COLUMN disk_free_avg; ALTER TABLE history_points DROP COLUMN disk_free_max; ALTER TABLE history_points DROP COLUMN on_battery_avg; ALTER TABLE history_points DROP COLUMN on_battery_max; UPDATE schema_version SET version = 2 WHERE component = 'history';")
+    }
+    let s2 = try HistoryStore(url: url)
+    #expect(try await s2.series(.cpu, from: Date(timeIntervalSince1970: base), to: Date(timeIntervalSince1970: base)).count == 1)
+    try await s2.append(snapshot(at: base + 1, cpu: 0.3))
+    #expect(try await s2.series(.onBattery, from: Date(timeIntervalSince1970: base + 1), to: Date(timeIntervalSince1970: base + 1)).first?.avg == 1)
+    try await s2.appendFocus([FocusSpan(start: Date(timeIntervalSince1970: base), end: Date(timeIntervalSince1970: base + 5), bundleID: "a", name: "A")])
+}

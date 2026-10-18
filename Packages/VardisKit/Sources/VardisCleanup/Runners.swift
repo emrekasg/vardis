@@ -5,9 +5,23 @@ public protocol SimctlRunner: Sendable {
     func unavailableDevicesJSON() async -> Data?
 }
 
-/// Returns `docker system df --format json` output, or nil when Docker is absent or not running.
+/// Output of one command.
+public struct CommandOutput: Sendable {
+    public var status: Int32
+    public var stdout: Data
+    public var stderr: String
+
+    public init(status: Int32, stdout: Data, stderr: String = "") {
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+    }
+}
+
+/// Runs the Docker CLI (Docker Desktop, OrbStack and Colima all ship one). Returns nil when no
+/// `docker` binary exists. Tests pass a stub, so nothing real is ever removed by them.
 public protocol DockerRunner: Sendable {
-    func systemDFJSON() async -> Data?
+    func docker(_ arguments: [String], timeout: TimeInterval) async -> CommandOutput?
 }
 
 public struct SystemSimctlRunner: SimctlRunner {
@@ -27,17 +41,21 @@ public struct SystemSimctlRunner: SimctlRunner {
 }
 
 public struct SystemDockerRunner: DockerRunner {
-    public static let candidatePaths = [
-        "/usr/local/bin/docker",
-        "/opt/homebrew/bin/docker",
-        "/Applications/Docker.app/Contents/Resources/bin/docker",
-    ]
-
     public init() {}
 
-    public func systemDFJSON() async -> Data? {
-        guard let path = Self.candidatePaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
-        return ProcessRunner.run(URL(fileURLWithPath: path), ["system", "df", "--format", "json"], timeout: 30)
+    /// Same places the Docker screen looks, plus PATH.
+    public static func executable() -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var candidates = ["/usr/local/bin/docker", "/opt/homebrew/bin/docker", home + "/.orbstack/bin/docker",
+                          home + "/.docker/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker",
+                          "/Applications/OrbStack.app/Contents/MacOS/xbin/docker"]
+        for dir in (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":") { candidates.append(dir + "/docker") }
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }
+    }
+
+    public func docker(_ arguments: [String], timeout: TimeInterval) async -> CommandOutput? {
+        guard let exe = Self.executable() else { return nil }
+        return ProcessRunner.runFull(exe, arguments, timeout: timeout)
     }
 }
 
@@ -51,22 +69,32 @@ enum ProcessRunner {
 
     /// Runs a tool and returns stdout when it exits 0 within `timeout`.
     static func run(_ executable: URL, _ args: [String], timeout: TimeInterval) -> Data? {
+        guard let r = runFull(executable, args, timeout: timeout), r.status == 0 else { return nil }
+        return r.stdout
+    }
+
+    /// Runs a tool; nil when it cannot start or does not finish within `timeout`.
+    static func runFull(_ executable: URL, _ args: [String], timeout: TimeInterval) -> CommandOutput? {
         let p = Process()
         p.executableURL = executable
         p.arguments = args
-        let out = Pipe()
+        let out = Pipe(), err = Pipe()
         p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
+        p.standardError = err
         p.standardInput = FileHandle.nullDevice
         let exited = DispatchSemaphore(value: 0)
         p.terminationHandler = { _ in exited.signal() }
         do { try p.run() } catch { return nil }
 
-        let box = Box()
+        let box = Box(), errBox = Box()
         let readDone = DispatchSemaphore(value: 0)
-        let handle = out.fileHandleForReading
+        let handle = out.fileHandleForReading, errHandle = err.fileHandleForReading
         DispatchQueue.global(qos: .utility).async {
             box.set(handle.readDataToEndOfFile())
+            readDone.signal()
+        }
+        DispatchQueue.global(qos: .utility).async {
+            errBox.set(errHandle.readDataToEndOfFile())
             readDone.signal()
         }
         if exited.wait(timeout: .now() + timeout) == .timedOut {
@@ -75,7 +103,9 @@ enum ProcessRunner {
             return nil
         }
         _ = readDone.wait(timeout: .now() + 2)
-        return p.terminationStatus == 0 ? box.get() : nil
+        _ = readDone.wait(timeout: .now() + 2)
+        return CommandOutput(status: p.terminationStatus, stdout: box.get(),
+                             stderr: String(decoding: errBox.get(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }
 

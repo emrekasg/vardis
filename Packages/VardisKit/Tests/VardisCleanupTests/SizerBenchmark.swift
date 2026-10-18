@@ -53,7 +53,7 @@ func sizerBenchmark() {
 func scanPhasesBenchmark() async {
     let clock = ContinuousClock()
     var t = clock.now
-    _ = await SystemDockerRunner().systemDFJSON()
+    _ = await SystemDockerRunner().docker(["system", "df", "--format", "json"], timeout: 30)
     print("BENCH docker df \(clock.now - t)")
     t = clock.now
     _ = await SystemSimctlRunner().unavailableDevicesJSON()

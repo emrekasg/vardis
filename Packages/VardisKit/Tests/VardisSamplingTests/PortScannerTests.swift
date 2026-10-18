@@ -113,3 +113,38 @@ struct PortScannerTests {
         #expect(!PortScanner.isRunning(pid: me.pid, started: me.started.addingTimeInterval(-5)))
     }
 }
+
+struct PortScannerPIDTests {
+    /// A TCP socket listening on an ephemeral loopback port shows up when only this pid is scanned.
+    @Test func scanLimitedToPIDsFindsOwnListener() async throws {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        try #require(fd >= 0)
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = UInt32(0x7F00_0001).bigEndian
+        addr.sin_port = 0
+        let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        try #require(bound == 0)
+        try #require(listen(fd, 1) == 0)
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+        let port = UInt16(bigEndian: addr.sin_port)
+
+        let found = await PortScanner().scan(pids: [getpid()])
+        let me = try #require(found.first { $0.pid == getpid() })
+        #expect(me.ports.contains(ListeningPort(port: port, transport: .tcp, localOnly: true)))
+        #expect(await PortScanner().scan(pids: []).isEmpty)
+    }
+}
+
+struct CoreLayoutTests {
+    @Test func coreCountsAddUp() {
+        let l = CoreLayout.current
+        #expect(l.performance > 0)
+        #expect(l.total == SystemInfo.logicalCores)
+        #expect(l.isEfficiency(core: 0) == (l.efficiency > 0))
+        let load = loadAverages()
+        #expect(load.one >= 0 && load.five >= 0 && load.fifteen >= 0)
+    }
+}

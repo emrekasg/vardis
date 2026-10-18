@@ -1,5 +1,35 @@
 import Darwin
 
+/// Performance and efficiency core counts (`hw.perflevel0/1.logicalcpu`). Intel Macs report one level.
+public struct CoreLayout: Sendable, Equatable {
+    public var performance: Int
+    public var efficiency: Int
+    public var total: Int { performance + efficiency }
+
+    public init(performance: Int, efficiency: Int) {
+        self.performance = performance
+        self.efficiency = efficiency
+    }
+
+    /// Read once; it never changes while the Mac is on.
+    public static let current: CoreLayout = {
+        let levels = Int(SystemInfo.sysctl("hw.nperflevels", as: Int32.self) ?? 1)
+        let p = Int(SystemInfo.sysctl("hw.perflevel0.logicalcpu", as: Int32.self) ?? Int32(SystemInfo.logicalCores))
+        let e = levels > 1 ? Int(SystemInfo.sysctl("hw.perflevel1.logicalcpu", as: Int32.self) ?? 0) : 0
+        return CoreLayout(performance: p, efficiency: e)
+    }()
+
+    /// Kind of each `host_processor_info` slot. Apple silicon lists the efficiency cluster first.
+    public func isEfficiency(core index: Int) -> Bool { index < efficiency }
+}
+
+/// 1, 5 and 15 minute load averages (`getloadavg`).
+public func loadAverages() -> (one: Double, five: Double, fifteen: Double) {
+    var l = [Double](repeating: 0, count: 3)
+    guard getloadavg(&l, 3) == 3 else { return (0, 0, 0) }
+    return (l[0], l[1], l[2])
+}
+
 /// Small wrappers around sysctl and mach time. Everything here is read once or is allocation-free.
 enum SystemInfo {
     /// Reads a fixed-size sysctl value into stack memory.

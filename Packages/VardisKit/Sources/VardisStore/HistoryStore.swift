@@ -5,9 +5,13 @@ public enum Metric: String, CaseIterable, Sendable, Codable {
     case cpu, memoryUsed, swap, diskRead, diskWrite, netIn, netOut, battery, gpu
     /// Added in schema 2.
     case pressure, compressed
+    /// Added in schema 3: free bytes on the startup disk, and 1 while running on battery (0 on power).
+    case diskFree, onBattery
 
     /// Columns created by schema 1; later metrics are added by `ALTER TABLE`.
     static let schema1: [Metric] = [.cpu, .memoryUsed, .swap, .diskRead, .diskWrite, .netIn, .netOut, .battery, .gpu]
+    static let schema2: [Metric] = [.pressure, .compressed]
+    static let schema3: [Metric] = [.diskFree, .onBattery]
 
     /// Column prefix in `history_points`. Fixed strings only, never user input.
     var column: String {
@@ -23,6 +27,8 @@ public enum Metric: String, CaseIterable, Sendable, Codable {
         case .gpu: "gpu"
         case .pressure: "pressure"
         case .compressed: "compressed"
+        case .diskFree: "disk_free"
+        case .onBattery: "on_battery"
         }
     }
 
@@ -49,6 +55,8 @@ public enum Metric: String, CaseIterable, Sendable, Codable {
         case .gpu: s.gpu?.utilization
         case .pressure: Metric.pressureValue(s.memory.pressure)
         case .compressed: Double(s.memory.compressed)
+        case .diskFree: s.disk.totalBytes > 0 ? Double(s.disk.freeBytes) : nil
+        case .onBattery: s.battery.map { $0.onBattery ? 1 : 0 }
         }
     }
 }
@@ -112,11 +120,40 @@ public enum HistoryTier: Int64, CaseIterable, Sendable {
     }
 }
 
+/// A stretch of time one app was frontmost.
+public struct FocusSpan: Sendable, Equatable {
+    public var start: Date
+    public var end: Date
+    public var bundleID: String
+    public var name: String
+    public var duration: TimeInterval { end.timeIntervalSince(start) }
+
+    public init(start: Date, end: Date, bundleID: String, name: String) {
+        self.start = start
+        self.end = end
+        self.bundleID = bundleID
+        self.name = name
+    }
+}
+
+/// One local day of history in a few numbers.
+public struct DayStat: Sendable, Equatable {
+    /// Start of the local day.
+    public var day: Date
+    public var recorded: TimeInterval
+    /// Average CPU (0...1) and memory in use (bytes).
+    public var cpu: Double
+    public var memory: Double
+    /// Energy the recorded apps drew, joules.
+    public var energyJoules: Double
+    public var averageWatts: Double { recorded > 0 ? energyJoules / recorded : 0 }
+}
+
 /// Tiered history: 1 s (1 h) -> 10 s (24 h) -> 1 min (30 d) -> 10 min (retention).
 /// Each tier keeps avg + max per metric, and the top 10 apps by CPU, by memory and by disk writes per point.
 /// Notable events (launches, pressure changes, kept awake, ...) live in `history_events`.
 public actor HistoryStore {
-    public static let schemaVersion: Int64 = 2
+    public static let schemaVersion: Int64 = 3
     static let appsPerRanking = 10
 
     private let db: Database
@@ -150,7 +187,7 @@ public actor HistoryStore {
                 """)
             }
             if current < 2 {
-                for m in Metric.allCases where !Metric.schema1.contains(m) {
+                for m in Metric.schema2 {
                     try db.execute("ALTER TABLE history_points ADD COLUMN \(m.column)_avg REAL")
                     try db.execute("ALTER TABLE history_points ADD COLUMN \(m.column)_max REAL")
                 }
@@ -159,6 +196,16 @@ public actor HistoryStore {
                 CREATE TABLE history_events(
                     id INTEGER PRIMARY KEY, ts REAL NOT NULL, kind TEXT NOT NULL, app TEXT, detail TEXT NOT NULL, value REAL);
                 CREATE INDEX history_events_ts ON history_events(ts);
+                """)
+            }
+            if current < 3 {
+                for m in Metric.schema3 {
+                    try db.execute("ALTER TABLE history_points ADD COLUMN \(m.column)_avg REAL")
+                    try db.execute("ALTER TABLE history_points ADD COLUMN \(m.column)_max REAL")
+                }
+                try db.execute("""
+                CREATE TABLE app_focus(id INTEGER PRIMARY KEY, start REAL NOT NULL, end REAL NOT NULL, bundle_id TEXT NOT NULL, name TEXT NOT NULL);
+                CREATE INDEX app_focus_end ON app_focus(end);
                 """)
             }
             try db.prepare("INSERT OR REPLACE INTO schema_version(component, version) VALUES('history', ?1)").run([.int(schemaVersion)])
@@ -340,6 +387,61 @@ public actor HistoryStore {
             .compactMap { $0 }
     }
 
+    // MARK: Foreground apps
+
+    /// Appends a stretch of time an app was frontmost. Stretches under a second are dropped.
+    public func appendFocus(_ spans: [FocusSpan]) throws {
+        let keep = spans.filter { $0.end.timeIntervalSince($0.start) >= 1 }
+        guard !keep.isEmpty else { return }
+        try db.transaction {
+            let ins = try db.prepare("INSERT INTO app_focus(start, end, bundle_id, name) VALUES(?1, ?2, ?3, ?4)")
+            for f in keep {
+                try ins.run([.double(f.start.timeIntervalSince1970), .double(f.end.timeIntervalSince1970), .text(f.bundleID), .text(f.name)])
+            }
+        }
+    }
+
+    /// Stretches overlapping `from...to`, clipped to it, oldest first.
+    public func focus(from: Date, to: Date) throws -> [FocusSpan] {
+        let lo = from.timeIntervalSince1970, hi = to.timeIntervalSince1970
+        return try db.prepare("SELECT start, end, bundle_id, name FROM app_focus WHERE end > ?1 AND start < ?2 ORDER BY start")
+            .all([.double(lo), .double(hi)]) { r in
+                FocusSpan(start: Date(timeIntervalSince1970: max(lo, r.double(0))), end: Date(timeIntervalSince1970: min(hi, r.double(1))),
+                          bundleID: r.text(2) ?? "", name: r.text(3) ?? "")
+            }
+    }
+
+    // MARK: Daily summaries
+
+    /// Per local day between `from` and `to`: time recorded, average CPU and memory, and the
+    /// energy the recorded apps drew. Read from the one tier that reaches back to `from` (minute
+    /// points for the last 30 days), aggregated in SQLite so a week costs a few milliseconds.
+    public func dailyStats(from: Date, to: Date, utcOffset: Int) throws -> [DayStat] {
+        let lo = Int64(from.timeIntervalSince1970.rounded(.down))
+        let hi = Int64(to.timeIntervalSince1970.rounded(.down))
+        guard hi > lo else { return [] }
+        let tier = try tierCovering(lo)
+        let off = Int64(utcOffset)
+        var out: [Int64: DayStat] = [:]
+        try db.prepare("""
+        SELECT (ts + ?4) / 86400 AS d, count(*), sum(cpu_avg * n) / sum(CASE WHEN cpu_avg IS NULL THEN NULL ELSE n END),
+               sum(mem_avg * n) / sum(CASE WHEN mem_avg IS NULL THEN NULL ELSE n END)
+        FROM history_points WHERE tier = ?1 AND ts >= ?2 AND ts < ?3 GROUP BY d
+        """).query([.int(tier.rawValue), .int(lo), .int(hi), .int(off)]) { r in
+            let d = r.int(0)
+            out[d] = DayStat(day: Date(timeIntervalSince1970: TimeInterval(d * 86_400 - off)), recorded: TimeInterval(r.int(1) * tier.width),
+                             cpu: r.double(2), memory: r.double(3), energyJoules: 0)
+            return true
+        }
+        try db.prepare("""
+        SELECT (ts + ?4) / 86400 AS d, sum(energy) FROM history_apps WHERE tier = ?1 AND ts >= ?2 AND ts < ?3 GROUP BY d
+        """).query([.int(tier.rawValue), .int(lo), .int(hi), .int(off)]) { r in
+            out[r.int(0)]?.energyJoules = r.double(1) * Double(tier.width)
+            return true
+        }
+        return out.values.sorted { $0.day < $1.day }
+    }
+
     /// Row count of one tier, for tests and diagnostics.
     func countRows(tier: HistoryTier, apps: Bool = false) throws -> Int {
         let table = apps ? "history_apps" : "history_points"
@@ -355,6 +457,7 @@ public actor HistoryStore {
             try db.prepare("DELETE FROM history_points WHERE ts < ?1").run([.int(cutoff)])
             try db.prepare("DELETE FROM history_apps WHERE ts < ?1").run([.int(cutoff)])
             try db.prepare("DELETE FROM history_events WHERE ts < ?1").run([.double(Double(cutoff))])
+            try db.prepare("DELETE FROM app_focus WHERE end < ?1").run([.double(Double(cutoff))])
         }
     }
 

@@ -14,8 +14,16 @@ struct LiveState {
     var diskWrite = RingBuffer<Double>(capacity: liveHistoryLength, filler: 0)
     var networkIn = RingBuffer<Double>(capacity: liveHistoryLength, filler: 0)
     var battery = RingBuffer<Double>(capacity: liveHistoryLength, filler: 0)
+    var diskRead = RingBuffer<Double>(capacity: liveHistoryLength, filler: 0)
+    var networkOut = RingBuffer<Double>(capacity: liveHistoryLength, filler: 0)
+    /// Swap in use, bytes.
+    var swap = RingBuffer<Double>(capacity: liveHistoryLength, filler: 0)
+    /// Whole-Mac power: battery draw when on battery, else the sum of app energy.
+    var power = RingBuffer<Double>(capacity: liveHistoryLength, filler: 0)
     /// Memory per app id, for row sparklines.
     var appMemory: [String: RingBuffer<Double>] = [:]
+    /// CPU per app id (fraction of the Mac), for watch list sparklines.
+    var appCPU: [String: RingBuffer<Double>] = [:]
     /// CPU average since launch, shown as "Avg" until history lands.
     var cpuAverage: Double = 0
     var gpuPeak: Double = 0
@@ -46,6 +54,13 @@ final class LiveModel {
     var networkIn: RingBuffer<Double> { state.networkIn }
     var battery: RingBuffer<Double> { state.battery }
     var appMemory: [String: RingBuffer<Double>] { state.appMemory }
+    var appCPU: [String: RingBuffer<Double>] { state.appCPU }
+    var diskRead: RingBuffer<Double> { state.diskRead }
+    var networkOut: RingBuffer<Double> { state.networkOut }
+    var swap: RingBuffer<Double> { state.swap }
+    var power: RingBuffer<Double> { state.power }
+    /// Number of samples taken; charts use it to slide by one bar per new sample.
+    var tick: Int { state.cpuSamples }
     var cpuAverage: Double { state.cpuAverage }
     var gpuPeak: Double { state.gpuPeak }
     var lastSampleDuration: Duration { state.lastSampleDuration }
@@ -125,6 +140,11 @@ final class LiveModel {
         }
     }
 
+    /// Oldest process start per app id, from the last full sample.
+    func appStartDates() async -> [String: Date] {
+        await sampler.appStartDates()
+    }
+
     func processes(inApp id: String) async -> [ProcessSample] {
         await sampler.processes(inApp: id)
     }
@@ -142,6 +162,16 @@ final class LiveModel {
         working.diskWrite.append(s.disk.writeBytesPerSecond)
         working.networkIn.append(s.network.receivedBytesPerSecond)
         working.battery.append(s.battery?.charge ?? 0)
+        working.diskRead.append(s.disk.readBytesPerSecond)
+        working.networkOut.append(s.network.sentBytesPerSecond)
+        working.swap.append(Double(s.memory.swapUsed))
+        if let b = s.battery, b.onBattery, let w = b.watts {
+            working.power.append(w)
+        } else {
+            var w = 0.0
+            for app in s.apps { w += app.energyWatts }
+            working.power.append(w)
+        }
         working.cpuSamples += 1
         working.cpuAverage += (s.cpu.total - working.cpuAverage) / Double(working.cpuSamples)
         working.gpuPeak = max(working.gpuPeak, s.gpu?.utilization ?? 0)
@@ -151,8 +181,12 @@ final class LiveModel {
             for app in s.apps.prefix(80) {
                 seen.insert(app.id)
                 working.appMemory[app.id, default: RingBuffer(capacity: Self.historyLength, filler: 0)].append(Double(app.memory))
+                working.appCPU[app.id, default: RingBuffer(capacity: Self.historyLength, filler: 0)].append(app.cpu)
             }
-            if working.appMemory.count > 200 { working.appMemory = working.appMemory.filter { seen.contains($0.key) } }
+            if working.appMemory.count > 200 {
+                working.appMemory = working.appMemory.filter { seen.contains($0.key) }
+                working.appCPU = working.appCPU.filter { seen.contains($0.key) }
+            }
         }
         working.ownFootprint = Self.currentFootprint()
         if !presenters.isEmpty { state = working }

@@ -13,6 +13,8 @@ enum Motion {
     static let value = Animation.smooth(duration: 0.45)
     /// Drawers and sheets sliding in.
     static let drawer = Animation.spring(response: 0.34, dampingFraction: 0.9)
+    /// Floating panels (command palette) springing in and out.
+    static let panel = Animation.spring(response: 0.26, dampingFraction: 0.88)
     /// Staggered entrance for grids: item `i` starts `i × 25 ms` later, capped so the last starts by 150 ms.
     static func stagger(_ i: Int) -> Animation { screen.delay(min(Double(i) * 0.025, 0.15)) }
 }

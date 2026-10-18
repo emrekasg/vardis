@@ -84,18 +84,25 @@ public enum SizeUnits {
     /// Measures tree units (file sets keep the size the listing gave them) in parallel at utility
     /// QoS. Blocks the calling thread until done. `bytes` on a tree unit is only an ordering hint:
     /// the largest previous sizes start first so one huge shard does not finish last.
-    public static func measure(_ units: [SizeUnit]) -> [UInt64] {
+    public static func measure(_ units: [SizeUnit], workers: Int = ProcessInfo.processInfo.activeProcessorCount) -> [UInt64] {
         guard !units.isEmpty else { return [] }
         let out = UnsafeMutableBufferPointer<UInt64>.allocate(capacity: units.count)
         out.initialize(repeating: 0)
         defer { out.deallocate() }
         let order = units.indices.sorted { (units[$0].bytes ?? .max) > (units[$1].bytes ?? .max) }
         let base = UncheckedSendable(out)
-        DispatchQueue.global(qos: .utility).sync {
-            DispatchQueue.concurrentPerform(iterations: order.count) { k in
-                let i = order[k]
-                let u = units[i]
-                base.value[i] = u.isFileSet ? (u.bytes ?? shallowFiles(u.path)) : FastSizer.bulkAllocatedSize(u.path)
+        let lanes = max(1, min(workers, order.count))
+        let qos: DispatchQoS.QoSClass = workers <= 2 ? .background : .utility
+        DispatchQueue.global(qos: qos).sync {
+            // Each lane takes every `lanes`-th unit, largest first, so at most `lanes` threads walk the disk.
+            DispatchQueue.concurrentPerform(iterations: lanes) { lane in
+                var k = lane
+                while k < order.count {
+                    let i = order[k]
+                    let u = units[i]
+                    base.value[i] = u.isFileSet ? (u.bytes ?? shallowFiles(u.path)) : FastSizer.bulkAllocatedSize(u.path)
+                    k += lanes
+                }
             }
         }
         return Array(out)

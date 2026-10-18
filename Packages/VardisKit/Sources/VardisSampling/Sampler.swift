@@ -86,6 +86,19 @@ public actor Sampler {
         return out
     }
 
+    /// When each app's oldest live process started, from the last full sample. Read once per new process,
+    /// so this is a walk over records already in memory.
+    public func appStartDates() -> [String: Date] {
+        var out = [String: Date]()
+        out.reserveCapacity(grouper.activeGroups.count)
+        for g in grouper.activeGroups {
+            var oldest: Date?
+            for p in g.members { if let s = p.started, oldest == nil || s < oldest! { oldest = s } }
+            if let oldest { out[g.id] = oldest }
+        }
+        return out
+    }
+
     /// Details for one app (processes in it), from the last sample. Sorted by memory, descending.
     public func processes(inApp appID: String) -> [ProcessSample] {
         guard let group = grouper.group(id: appID) else { return [] }

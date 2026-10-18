@@ -46,11 +46,15 @@ private struct DockerContent: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ContainerHeaderRow()
                             ForEach(model.containers) { c in
-                                ContainerRow(container: c, model: model)
-                                Hairline().padding(.leading, 28)
+                                VStack(spacing: 0) {
+                                    ContainerRow(container: c, model: model)
+                                    Hairline().padding(.leading, 28)
+                                }
+                                .transition(.row)
                             }
                         }
                         .padding(.bottom, 20)
+                        .animatesRows(model.containers.map(\.id))
                     }
                 }
             }
@@ -73,7 +77,7 @@ private struct DockerContent: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(d.type).font(.captionV).foregroundStyle(Theme.textSecondary)
                             Text(d.size).font(.numeric).foregroundStyle(Theme.text)
-                            Text(d.reclaimable.isEmpty ? "\(d.total) total" : "\(d.total) total · \(d.reclaimable) reclaimable")
+                            Text(d.reclaimable.isEmpty ? "\(d.total) total" : "\(d.total) total, \(d.reclaimable) reclaimable")
                                 .font(.captionV).foregroundStyle(Theme.textTertiary)
                         }
                     }
@@ -81,7 +85,7 @@ private struct DockerContent: View {
                 }
             }
         }
-        .padding(.horizontal, 28).padding(.top, 20).padding(.bottom, 14)
+        .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 14)
     }
 }
 
@@ -131,8 +135,10 @@ private struct ContainerRow: View {
                 .frame(width: DockerColumns.ports, alignment: .leading).help(c.ports)
             Text(c.isRunning ? c.cpu.map(Fmt.percent) ?? "–" : "").font(.numeric).foregroundStyle(Theme.textSecondary)
                 .frame(width: DockerColumns.cpu, alignment: .trailing)
+                .contentTransition(.numericText()).motion(Motion.value, value: c.cpu)
             Text(c.isRunning ? c.memory ?? "–" : "").font(.numeric).foregroundStyle(Theme.text)
                 .frame(width: DockerColumns.memory, alignment: .trailing)
+                .contentTransition(.numericText()).motion(Motion.value, value: c.memory)
             HStack(spacing: 2) {
                 if model.busy.contains(c.id) {
                     Text(c.isRunning ? "Stopping" : "Starting").font(.captionV).foregroundStyle(Theme.textTertiary)

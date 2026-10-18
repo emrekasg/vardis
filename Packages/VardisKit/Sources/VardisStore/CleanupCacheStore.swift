@@ -112,4 +112,13 @@ public actor CleanupCacheStore {
             }
         }
     }
+
+    /// A number kept next to the cache (for example the version of the rules that produced it).
+    public func meta(_ key: String) throws -> Double? {
+        try db.prepare("SELECT value FROM cleanup_meta WHERE key = ?1").all([.text(key)]) { $0.double(0) }.first
+    }
+
+    public func setMeta(_ key: String, _ value: Double) throws {
+        try db.prepare("INSERT OR REPLACE INTO cleanup_meta(key, value) VALUES(?1, ?2)").run([.text(key), .double(value)])
+    }
 }

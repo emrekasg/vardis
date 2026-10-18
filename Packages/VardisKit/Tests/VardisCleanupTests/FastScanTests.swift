@@ -69,7 +69,7 @@ import Testing
     try h.file("Library/Caches/go-build/00/obj", bytes: 10_000)
     try h.file(".npm/_cacache/x", bytes: 10_000)
     let allowed = [h.home.appendingPathComponent("Library/Caches")]
-    let config = CleanupConfig(home: h.home, projectRoots: [], enabled: [.packageCaches, .docker], allowedRoots: allowed)
+    let config = CleanupConfig(home: h.home, projectRoots: [], enabled: [.packageCaches, .dockerImages], allowedRoots: allowed)
     let s = CleanupScanner(config: config, simctl: StubSimctl(json: nil), docker: StubDocker(json: dockerJSON))
     let r = await s.fullScan()
     #expect(r.items.map(\.title) == ["Go"])
@@ -92,4 +92,14 @@ import Testing
     let t = await s.trash(r.items)
     #expect(t.movedIDs == r.items.map(\.id))
     #expect(r.removing(Set(t.movedIDs)).groups.isEmpty)
+}
+
+@Test func discoversProjectRootsInHome() throws {
+    let h = try FakeHome()
+    try h.file("work/api/.git/HEAD", bytes: 10)
+    try h.file("clients/acme/site/package.json", bytes: 10)
+    try h.file("Documents/notes/package.json", bytes: 10)
+    try h.file("photos/2026/a.jpg", bytes: 10)
+    let roots = CleanupConfig.discoverProjectRoots(home: h.home).map(\.lastPathComponent)
+    #expect(Set(roots) == ["work", "clients"])
 }

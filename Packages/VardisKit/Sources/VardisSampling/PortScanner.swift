@@ -76,44 +76,58 @@ public actor PortScanner {
         let count = listUserPIDs()
         for i in 0..<count {
             let pid = pids[i]
-            guard pid > 0 else { continue }
-            guard let sockets = sockets(of: pid), !sockets.ports.isEmpty else { continue }
-            guard let bsd = Self.bsdInfo(pid), bsd.pbi_uid == uid else { continue }
-            var usage = rusage_info_v6()
-            let gotUsage = withUnsafeMutablePointer(to: &usage) { ptr in
-                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V6, $0) == 0 }
-            }
-            let key = ProcessKey(pid: pid, start: gotUsage ? usage.ri_proc_start_abstime : 0)
+            guard pid > 0, let (server, key) = server(pid: pid, now: now, nowNanos: nowNanos) else { continue }
             seen.insert(key)
-
-            let ticks = usage.ri_user_time &+ usage.ri_system_time
-            var cpu = 0.0
-            if let last = lastTicks[key], nowNanos > last.at {
-                cpu = ProcessCollector.cpuFraction(cpuNanos: timebase.nanos(ProcessCollector.delta(last.ticks, ticks)),
-                                                   wallNanos: Double(nowNanos - last.at), cores: cores)
-            }
-            lastTicks[key] = (ticks, nowNanos)
-            var tracker = idle[key] ?? IdleTracker(since: now)
-            tracker.observe(cpuNanos: timebase.nanos(ticks), at: now)
-            idle[key] = tracker
-
-            let path = Self.executablePath(pid)
-            let rawName = path.flatMap { $0.split(separator: "/").last.map(String.init) } ?? Self.string(bsd.pbi_name).nonEmpty ?? Self.string(bsd.pbi_comm)
-            // Same naming as the Apps screen, so a binary called "2.1.302" reads as its tool.
-            let name = AppGrouper.toolIdentity(name: rawName, path: path ?? "").name
-            let cwd = Self.workingDirectory(pid)
-            out.append(ServerProcess(
-                pid: pid, name: name, executablePath: path ?? "",
-                workingDirectory: cwd, projectPath: cwd.flatMap(project(for:)),
-                started: Date(timeIntervalSince1970: Double(bsd.pbi_start_tvsec) + Double(bsd.pbi_start_tvusec) / 1e6),
-                ports: sockets.ports, establishedConnections: sockets.established,
-                cpu: cpu, memory: gotUsage ? usage.ri_phys_footprint : 0,
-                isIdle: sockets.established == 0 && tracker.isIdle(at: now, after: idleAfter)
-            ))
+            out.append(server)
         }
         idle = idle.filter { seen.contains($0.key) }
         lastTicks = lastTicks.filter { seen.contains($0.key) }
         return out.sorted { ($0.ports.first?.port ?? 0) < ($1.ports.first?.port ?? 0) }
+    }
+
+    /// Listening sockets of these pids only (one app's processes), without walking every process.
+    /// Pids of other users are skipped, as in `scan()`.
+    public func scan(pids wanted: [Int32]) -> [ServerProcess] {
+        let now = Date()
+        let nowNanos = SystemInfo.uptimeNanos()
+        return Set(wanted).compactMap { $0 > 0 ? server(pid: $0, now: now, nowNanos: nowNanos)?.0 : nil }
+            .sorted { ($0.ports.first?.port ?? 0) < ($1.ports.first?.port ?? 0) }
+    }
+
+    private func server(pid: Int32, now: Date, nowNanos: UInt64) -> (ServerProcess, ProcessKey)? {
+        guard let sockets = sockets(of: pid), !sockets.ports.isEmpty else { return nil }
+        guard let bsd = Self.bsdInfo(pid), bsd.pbi_uid == uid else { return nil }
+        var usage = rusage_info_v6()
+        let gotUsage = withUnsafeMutablePointer(to: &usage) { ptr in
+            ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V6, $0) == 0 }
+        }
+        let key = ProcessKey(pid: pid, start: gotUsage ? usage.ri_proc_start_abstime : 0)
+
+        let ticks = usage.ri_user_time &+ usage.ri_system_time
+        var cpu = 0.0
+        if let last = lastTicks[key], nowNanos > last.at {
+            cpu = ProcessCollector.cpuFraction(cpuNanos: timebase.nanos(ProcessCollector.delta(last.ticks, ticks)),
+                                               wallNanos: Double(nowNanos - last.at), cores: cores)
+        }
+        lastTicks[key] = (ticks, nowNanos)
+        var tracker = idle[key] ?? IdleTracker(since: now)
+        tracker.observe(cpuNanos: timebase.nanos(ticks), at: now)
+        idle[key] = tracker
+
+        let path = Self.executablePath(pid)
+        let rawName = path.flatMap { $0.split(separator: "/").last.map(String.init) } ?? Self.string(bsd.pbi_name).nonEmpty ?? Self.string(bsd.pbi_comm)
+        // Same naming as the Apps screen, so a binary called "2.1.302" reads as its tool.
+        let name = AppGrouper.toolIdentity(name: rawName, path: path ?? "").name
+        let cwd = Self.workingDirectory(pid)
+        let server = ServerProcess(
+            pid: pid, name: name, executablePath: path ?? "",
+            workingDirectory: cwd, projectPath: cwd.flatMap(project(for:)),
+            started: Date(timeIntervalSince1970: Double(bsd.pbi_start_tvsec) + Double(bsd.pbi_start_tvusec) / 1e6),
+            ports: sockets.ports, establishedConnections: sockets.established,
+            cpu: cpu, memory: gotUsage ? usage.ri_phys_footprint : 0,
+            isIdle: sockets.established == 0 && tracker.isIdle(at: now, after: idleAfter)
+        )
+        return (server, key)
     }
 
     // MARK: Sockets

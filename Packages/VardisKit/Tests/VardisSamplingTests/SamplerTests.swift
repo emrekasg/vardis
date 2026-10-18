@@ -60,3 +60,14 @@ struct SamplerTests {
         #expect(median < budget)
     }
 }
+
+struct AppStartTests {
+    @Test func ownAppHasAStartDateInThePast() async throws {
+        let sampler = Sampler()
+        let s = await sampler.sample()
+        let mine = try #require(s.apps.first { $0.processIDs.contains(getpid()) })
+        let started = try #require(await sampler.appStartDates()[mine.id])
+        #expect(started <= Date())
+        #expect(started > Date().addingTimeInterval(-86_400 * 365))
+    }
+}

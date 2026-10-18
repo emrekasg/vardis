@@ -35,26 +35,29 @@ struct ClaudeLiveView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(claude.live.count) running").font(.titleV).foregroundStyle(Theme.text)
+                    .contentTransition(.numericText()).motion(Motion.quick, value: claude.live.count)
                 Text(subtitle).font(.calloutV).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 IndexingLine().padding(.top, 4)
             }
-            .padding(.horizontal, 24).padding(.top, 22).padding(.bottom, 14)
+            .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 14)
             ScrollView {
                 LazyVStack(spacing: 4) {
                     ForEach(claude.live) { s in
                         LiveRow(info: s, isSelected: s.id == selected?.id)
                             .onTapGesture { selection = s.id }
+                            .transition(.row)
                     }
                 }
                 .padding(.horizontal, 16)
+                .animatesRows(claude.live.map(\.id))
             }
         }
     }
 
     private var subtitle: String {
         var parts = ["\(ClaudeFmt.tokens(claude.lastHourTokens)) tokens in the last hour"]
-        if let a = claude.activeAccount, claude.accounts.count > 1 { parts.append("\(a.name) account") }
-        return parts.joined(separator: " \u{00B7} ")
+        if let a = claude.activeAccount, claude.accounts.count > 1 { parts.append("on \(a.name)") }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -71,7 +74,7 @@ struct LiveStatusText {
             color = Theme.textSecondary; dot = Theme.green
         case .working: text = "Working"; color = Theme.textSecondary; dot = Theme.green
         case .waiting: text = "Waiting for you"; color = Theme.orange; dot = Theme.orange
-        case .idle(let age): text = age >= 3600 ? "Idle \(Int(age / 3600)) h \(Int(age.truncatingRemainder(dividingBy: 3600) / 60)) m" : age >= 60 ? "Idle \(Int(age / 60)) m" : "Idle"; color = Theme.textTertiary; dot = Theme.textTertiary
+        case .idle(let age): text = age >= 60 ? "Idle \(DurationFmt.compact(age))" : "Idle"; color = Theme.textTertiary; dot = Theme.textTertiary
         }
     }
 }
@@ -87,7 +90,8 @@ private struct LiveRow: View {
                 Circle().fill(status.dot).frame(width: 7, height: 7)
                 Text(info.projectName).font(.headlineV).foregroundStyle(Theme.text).lineLimit(1)
                 Spacer()
-                Text(ClaudeFmt.elapsed(since: info.process.startedAt)).font(.captionV).foregroundStyle(Theme.textTertiary)
+                Text(ClaudeFmt.elapsed(since: info.process.startedAt)).font(.captionV).monospacedDigit().foregroundStyle(Theme.textTertiary)
+                    .help("Running since \(info.process.startedAt.map(ClaudeFmt.when) ?? "–")")
             }
             HStack(spacing: 4) {
                 if let b = info.branch {
@@ -104,7 +108,8 @@ private struct LiveRow: View {
                 Text(status.text).font(.captionV).foregroundStyle(status.color).lineLimit(1)
                 Spacer()
                 Meter(value: info.activity.contextFraction, color: contextColor(info.activity.contextFraction)).frame(width: 60)
-                Text(Fmt.percent(info.activity.contextFraction)).font(.captionV).foregroundStyle(Theme.textTertiary).frame(width: 32, alignment: .trailing)
+                Text(Fmt.percent(info.activity.contextFraction)).font(.captionV).monospacedDigit().foregroundStyle(Theme.textTertiary).frame(width: 32, alignment: .trailing)
+                    .contentTransition(.numericText()).motion(Motion.value, value: info.activity.contextFraction)
             }
             .padding(.leading, 14)
         }
@@ -139,7 +144,7 @@ private struct LiveDetail: View {
                 }
                 ContextChart(points: info.activity.contextSeries, window: info.activity.contextWindow)
             }
-            .padding(.horizontal, 36).padding(.vertical, 28)
+            .padding(.horizontal, 32).padding(.top, 24).padding(.bottom, 28)
         }
     }
 
@@ -147,15 +152,14 @@ private struct LiveDetail: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(info.projectName).font(.largeTitleV).foregroundStyle(Theme.text)
-                HStack(spacing: 6) {
-                    Text(ClaudeModel.tildePath(info.process.cwd))
-                    if let b = info.branch {
-                        Text("\u{00B7}")
-                        Image(systemName: "arrow.triangle.branch").font(.system(size: 10))
-                        Text(b)
-                    }
-                    Text("\u{00B7} \(ContextWindow.displayName(info.model)) \u{00B7} pid \(String(info.process.pid)) \u{00B7} started \(ClaudeFmt.time(info.process.startedAt))")
+                HStack(spacing: 14) {
+                    Label(ClaudeModel.tildePath(info.process.cwd), systemImage: "folder")
+                    if let b = info.branch { Label(b, systemImage: "arrow.triangle.branch") }
+                    Label(ContextWindow.displayName(info.model), systemImage: "cpu")
+                    Text("started \(info.process.startedAt.map(ClaudeFmt.when) ?? "–")")
+                        .help("pid \(String(info.process.pid))")
                 }
+                .labelStyle(MetaLabelStyle())
                 .font(.calloutV).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
             Spacer()
@@ -185,6 +189,7 @@ private struct LiveDetail: View {
                 if let start = t.startedAt {
                     TimelineView(.periodic(from: .now, by: 1)) { _ in
                         Text(Fmt.duration(Date().timeIntervalSince(start))).font(.numeric).foregroundStyle(Theme.textSecondary)
+                            .contentTransition(.numericText())
                     }
                 }
             } else {
@@ -208,10 +213,10 @@ private struct LiveDetail: View {
                        caption: "\(ClaudeFmt.tokens(a.contextTokens)) of \(a.contextWindow >= ContextWindow.extended ? "1M" : ClaudeFmt.tokens(a.contextWindow))",
                        meter: (a.contextFraction, contextColor(a.contextFraction)))
             ClaudeStat(label: "Tokens", value: ClaudeFmt.tokens(t.total),
-                       caption: "\(ClaudeFmt.tokens(t.input)) in \u{00B7} \(ClaudeFmt.tokens(t.output)) out \u{00B7} \(ClaudeFmt.tokens(cached)) cached")
+                       caption: "\(ClaudeFmt.tokens(t.input)) in, \(ClaudeFmt.tokens(t.output)) out, \(ClaudeFmt.tokens(cached)) cached")
             ClaudeStat(label: "Cost", value: info.session.map { ClaudeFmt.usd($0.costUSD) } ?? "–", caption: "API-equivalent")
             ClaudeStat(label: "Tool calls", value: "\(info.session?.toolCalls ?? a.tools.count)",
-                       caption: "\(info.session?.failedToolCalls ?? 0) failed \u{00B7} \(a.subagentCalls) subagents")
+                       caption: "\(info.session?.failedToolCalls ?? 0) failed, \(a.subagentCalls) subagents")
         }
     }
 }
@@ -235,6 +240,7 @@ private struct ActivityFeed: View {
                 Text("No tool calls yet").font(.calloutV).foregroundStyle(Theme.textTertiary).padding(.vertical, 12)
             }
             ForEach(tools.prefix(12)) { t in
+                VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Text(ClaudeFmt.time(t.startedAt)).font(.numeric).foregroundStyle(Theme.textTertiary).frame(width: 44, alignment: .leading)
                     Image(systemName: Self.symbol(t.name)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).frame(width: 14)
@@ -250,9 +256,11 @@ private struct ActivityFeed: View {
                 }
                 .padding(.vertical, 9)
                 Hairline()
+                }
+                .transition(.row)
             }
         }
-        .motion(Motion.quick, value: tools.first?.id)
+        .animatesRows(tools.prefix(12).map(\.id))
     }
 
     static func symbol(_ name: String) -> String {
@@ -335,5 +343,15 @@ private struct ContextChart: View {
     /// Drops of more than half the context between two messages.
     private var compactions: Int {
         zip(points, points.dropFirst()).filter { $1.tokens < $0.tokens / 2 && $0.tokens > 50_000 }.count
+    }
+}
+
+/// Icon and text for one-line metadata, with the icon small and quiet.
+struct MetaLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon.font(.system(size: 10))
+            configuration.title
+        }
     }
 }

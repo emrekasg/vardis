@@ -18,16 +18,17 @@ This folder holds the Vardis icon and the approved screen designs.
 | Accent blue | `#1F7AE0` | `#5AA2F0` | Links, focus, primary actions (`#1A6DCB` behind white text) |
 | Teal | `#2FD4C4` | `#2FD4C4` | One highlight at a time, from the icon's stroke |
 
-Type is the system font (SF Pro on Apple platforms). No web fonts.
+Type is the system font (SF Pro on Apple platforms) in the app.
 
-## Website assets
+## Website (vardis.app)
 
-The website copies are in `website/assets/screens`. They are cropped to the window (the Figma frame padding removed) and compressed to WebP:
+The site lives in `website/` and is plain static files: no build step, no third-party requests, a strict CSP (`website/_headers`) with no inline scripts or style attributes.
 
-```sh
-sips -c 902 1442 --cropOffset 39 59 brand/screens/now.png --out /tmp/now.png
-cwebp -q 82 -m 6 /tmp/now.png -o website/assets/screens/now.webp
-```
+- **Look:** light pages, no navigation bar. Bold system sans headlines (700, tight tracking), with the key phrase in the brand gradient (`#0e9f9a → #1a8fd8 → #1a6dcb`, from the icon's teal→blue stroke). Navy `#0b1220` for primary buttons and for the product-art panels (hero stage, Claude Code stage). Soft teal/blue glows and a faint 64 px grid behind sections, used sparingly.
+- **Product art:** the screens are recreated in HTML/SVG/canvas with fictional data and animated (live tiles, processes collapsing into apps, a scrubbable day timeline, cleanup moving to the Trash with Undo, Claude Code tabs). Tile colours follow the app (CPU blue, memory amber, GPU pink, disk teal, network violet, battery green).
+- **Real screenshots:** only the top row of the Now screen is used (`website/assets/img/now-real-*.webp`). Real screens contain project names, paths, session titles and costs; never publish them unredacted.
+- **Motion:** transform/opacity only, paused off screen and in hidden tabs, started after the `load` event, off under `prefers-reduced-motion`, and a Pause motion button.
+- **Share image:** `website/assets/img/og.png` (1200 × 630) is rendered from `website-src/og/og.html` with headless Chrome.
 
 ## Use of the name and logo
 

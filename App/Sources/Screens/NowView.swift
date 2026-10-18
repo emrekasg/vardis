@@ -1,311 +1,305 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import VardisCore
 
+/// Now: four vitals people check most, large and calm, then detail tiles the person can hide and reorder.
+/// Every tile and vital opens a drawer with the last minute, the last hour or day from history, top apps and facts.
 struct NowView: View {
     @Environment(LiveModel.self) private var live
+    @Environment(Navigation.self) private var nav
+    @Environment(ClaudeModel.self) private var claude
+    @State private var prefs = NowPrefs.shared
+    @State private var open: NowMetric?
+    @State private var editing = false
+    @State private var dragging: NowTile?
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .top), count: 3)
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                LiveStrip()
+            VStack(alignment: .leading, spacing: 14) {
+                NowHeader(editing: $editing)
                 if let s = live.snapshot {
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        cpuTile(s)
-                        memoryTile(s)
-                        gpuTile(s)
-                        diskTile(s)
-                        networkTile(s)
-                        batteryTile(s)
-                        processesTile(s)
-                        energyTile(s)
-                    }
-                    HStack(alignment: .top, spacing: 12) {
-                        MemoryByTypePanel(memory: s.memory)
-                        MemoryByAppPanel(apps: s.apps, memory: s.memory)
-                        PowerByAppPanel(apps: s.apps)
-                    }
+                    VitalsStrip(snapshot: s, open: { open = $0 })
+                        .staggeredAppear(0)
+                    tiles(s)
+                    if editing { hiddenTray }
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 24)
         }
         .background(Theme.surface)
+        #if DEBUG
+        // Visual checks: `VARDIS_NOW_DRAWER=<metric>` opens a drawer on launch (with --snapshot).
+        .onAppear { if let m = ProcessInfo.processInfo.environment["VARDIS_NOW_DRAWER"].flatMap(NowMetric.init(rawValue:)) { open = m } }
+        #endif
+        .detailDrawer(item: $open, width: 460) { metric in
+            NowDetailPanel(metric: metric, openApp: openApp)
+        }
     }
 
-    // MARK: Tiles
-
-    private func cpuTile(_ s: Snapshot) -> some View {
-        MetricTile(title: "CPU", symbol: "cpu", color: Theme.Metric.cpu,
-                   context: "Now · \(s.cpu.perCore.count) cores",
-                   value: "\(Int((s.cpu.total * 100).rounded()))", unit: "%",
-                   stats: [("User", Fmt.percent(s.cpu.user)), ("System", Fmt.percent(s.cpu.system)), ("Avg", Fmt.percent(live.cpuAverage))],
-                   history: live.cpu.elements, top: top(s.apps, by: \.cpu).map { ($0, Fmt.percent($0.cpu)) })
+    private func tiles(_ s: Snapshot) -> some View {
+        let shown = prefs.visible.filter { available($0, s) }
+        return VStack(spacing: 12) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                ForEach(Array(shown.filter { !$0.isWide }.enumerated()), id: \.element) { i, tile in
+                    editable(tile) { tileView(tile, s) }
+                        .staggeredAppear(i + 1)
+                }
+            }
+            ForEach(shown.filter(\.isWide)) { tile in
+                editable(tile) { tileView(tile, s) }
+                    .staggeredAppear(shown.count)
+            }
+        }
+        .motion(Motion.travel, value: prefs.order)
+        .motion(Motion.screen, value: prefs.hidden)
     }
 
-    private func memoryTile(_ s: Snapshot) -> some View {
-        let m = s.memory
-        let parts = Fmt.bytes(m.used).split(separator: " ")
-        return MetricTile(title: "Memory", symbol: "memorychip", color: Theme.Metric.memory,
-                          context: "In use of \(Fmt.bytes(m.total))",
-                          value: String(parts.first ?? ""), unit: String(parts.last ?? ""),
-                          badge: pressureBadge(m.pressure),
-                          stats: [("App", Fmt.bytes(m.app)), ("Wired", Fmt.bytes(m.wired)), ("Compressed", Fmt.bytes(m.compressed))],
-                          history: live.memory.elements, top: s.apps.first.map { ($0, Fmt.bytes($0.memory)) })
-    }
-
-    private func gpuTile(_ s: Snapshot) -> some View {
-        MetricTile(title: "GPU", symbol: "square.stack.3d.up", color: Theme.Metric.gpu,
-                   context: s.gpu?.name ?? "Graphics",
-                   value: s.gpu.map { "\(Int(($0.utilization * 100).rounded()))" } ?? "–", unit: "%",
-                   stats: [("Memory", s.gpu?.memoryBytes.map(Fmt.bytes) ?? "–"), ("Peak", Fmt.percent(live.gpuPeak)), ("", "")],
-                   history: live.gpu.elements, top: nil)
-    }
-
-    private func diskTile(_ s: Snapshot) -> some View {
-        let parts = Fmt.bytes(s.disk.freeBytes).split(separator: " ")
-        return MetricTile(title: "Disk", symbol: "internaldrive", color: Theme.Metric.disk,
-                          context: "Free of \(Fmt.bytes(s.disk.totalBytes))",
-                          value: String(parts.first ?? ""), unit: String(parts.last ?? ""),
-                          stats: [("Read", Fmt.rate(s.disk.readBytesPerSecond)), ("Write", Fmt.rate(s.disk.writeBytesPerSecond)), ("", "")],
-                          history: live.diskWrite.normalized, top: top(s.apps, by: \.diskWriteBytesPerSecond).map { ($0, Fmt.rate($0.diskWriteBytesPerSecond)) })
-    }
-
-    private func networkTile(_ s: Snapshot) -> some View {
-        let parts = Fmt.rate(s.network.receivedBytesPerSecond).split(separator: " ")
-        return MetricTile(title: "Network", symbol: "globe", color: Theme.Metric.network,
-                          context: "Downloading",
-                          value: String(parts.first ?? ""), unit: String(parts.last ?? ""),
-                          stats: [("Uploading", Fmt.rate(s.network.sentBytesPerSecond)), ("Received", Fmt.bytes(s.network.receivedTotal)), ("Sent", Fmt.bytes(s.network.sentTotal))],
-                          history: live.networkIn.normalized, top: nil)
+    /// Claude hides itself without data; everything else is always available.
+    private func available(_ tile: NowTile, _ s: Snapshot) -> Bool {
+        switch tile {
+        case .gpu: s.gpu != nil
+        case .claude: ClaudeTile.hasData(claude)
+        default: true
+        }
     }
 
     @ViewBuilder
-    private func batteryTile(_ s: Snapshot) -> some View {
-        if let b = s.battery {
-            MetricTile(title: "Battery", symbol: "battery.75percent", color: Theme.Metric.battery,
-                       context: b.isCharging ? "Charging" : (b.onBattery ? "On battery" : "On power adapter"),
-                       value: "\(Int((b.charge * 100).rounded()))", unit: "%",
-                       stats: [("Remaining", b.timeRemaining.map(Fmt.duration) ?? "–"), ("Draw", b.watts.map(Fmt.watts) ?? "–"), ("Health", b.health.map(Fmt.percent) ?? "–")],
-                       history: live.battery.elements, top: top(s.apps, by: \.energyWatts).map { ($0, Fmt.watts($0.energyWatts)) })
-        } else {
-            MetricTile(title: "Power", symbol: "bolt", color: Theme.Metric.battery,
-                       context: "All apps", value: String(format: "%.1f", s.apps.reduce(0) { $0 + $1.energyWatts }), unit: "W",
-                       stats: [("", ""), ("", ""), ("", "")], history: nil,
-                       top: top(s.apps, by: \.energyWatts).map { ($0, Fmt.watts($0.energyWatts)) })
+    private func tileView(_ tile: NowTile, _ s: Snapshot) -> some View {
+        let opener: (NowMetric) -> (() -> Void)? = { m in editing ? nil : { open = m } }
+        switch tile {
+        case .cpu: CPUTile(snapshot: s, onOpen: opener(.cpu), openApp: openApp)
+        case .memory: MemoryTile(snapshot: s, onOpen: opener(.memory), openApp: openApp)
+        case .network: NetworkTile(snapshot: s, onOpen: opener(.network))
+        case .disk: DiskTile(snapshot: s, onOpen: opener(.disk), openApp: openApp)
+        case .gpu: GPUTile(snapshot: s, onOpen: opener(.gpu))
+        case .power: PowerTile(snapshot: s, onOpen: opener(.power), openApp: openApp)
+        case .claude: ClaudeTile(onOpen: editing ? nil : { nav.screen = .claudeUsage })
+        case .watchlist: WatchListTile(snapshot: s, openApp: openApp)
         }
     }
 
-    private func processesTile(_ s: Snapshot) -> some View {
-        MetricTile(title: "Processes", symbol: "square.grid.2x2", color: Theme.Metric.ane,
-                   context: "Grouped into apps", value: "\(s.apps.count)", unit: "apps",
-                   stats: [("Processes", "\(s.processCount)"), ("Swap", Fmt.bytes(s.memory.swapUsed)), ("Uptime", Fmt.duration(s.uptime))],
-                   history: nil, top: nil)
+    private func editable<C: View>(_ tile: NowTile, @ViewBuilder _ content: () -> C) -> some View {
+        content()
+            .allowsHitTesting(!editing)
+            .overlay(alignment: .topTrailing) {
+                if editing {
+                    HStack(spacing: 4) {
+                        Button { prefs.move(tile, by: -1) } label: { Image(systemName: "chevron.left") }
+                            .help("Move earlier")
+                        Button { prefs.move(tile, by: 1) } label: { Image(systemName: "chevron.right") }
+                            .help("Move later")
+                        Button { prefs.setHidden(tile, true) } label: { Image(systemName: "eye.slash") }
+                            .help("Hide \(tile.title)")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.separator))
+                    .padding(10)
+                    .transition(.opacity)
+                }
+            }
+            .overlay {
+                if editing {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(dragging == tile ? Theme.accent : Theme.accent.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                        .allowsHitTesting(false)
+                }
+            }
+            .opacity(dragging == tile ? 0.55 : 1)
+            .onDrag {
+                dragging = tile
+                return NSItemProvider(object: tile.rawValue as NSString)
+            }
+            .onDrop(of: [.text], delegate: TileDrop(target: tile, dragging: $dragging, prefs: prefs, enabled: editing))
     }
 
-    private func energyTile(_ s: Snapshot) -> some View {
-        MetricTile(title: "Vardis", symbol: "gauge.with.needle", color: Theme.Metric.agents,
-                   context: "Measuring itself", value: Fmt.bytes(live.ownFootprint).split(separator: " ").first.map(String.init) ?? "", unit: "MB",
-                   stats: [("Last sample", String(format: "%.1f ms", live.lastSampleDuration.milliseconds)), ("Interval", live.isFast ? "1 s" : "5 s"), ("", "")],
-                   history: nil, top: nil)
-    }
-
-    private func top(_ apps: [AppSample], by key: KeyPath<AppSample, Double>) -> AppSample? {
-        apps.max { $0[keyPath: key] < $1[keyPath: key] }
-    }
-
-    private func pressureBadge(_ p: MemoryPressure) -> (String, BadgeTone) {
-        switch p {
-        case .normal: ("Normal", .green)
-        case .warning: ("Warning", .orange)
-        case .critical: ("Critical", .red)
+    private var hiddenTray: some View {
+        let hidden = prefs.order.filter { prefs.hidden.contains($0) }
+        return HStack(spacing: 8) {
+            Text(hidden.isEmpty ? "Drag tiles to reorder. Hidden tiles appear here." : "Hidden")
+                .font(.calloutV).foregroundStyle(Theme.textTertiary)
+            ForEach(hidden) { tile in
+                Button { prefs.setHidden(tile, false) } label: {
+                    Label(tile.title, systemImage: "plus").font(.calloutV)
+                }
+                .buttonStyle(.bordered)
+                .transition(.opacity)
+            }
+            Spacer()
+            Button("Reset layout") { prefs.resetLayout() }.buttonStyle(.borderless).font(.calloutV)
         }
+        .padding(.horizontal, 4)
+        .transition(.opacity)
+    }
+
+    private func openApp(_ app: AppSample) {
+        open = nil
+        nav.open(.apps, appID: app.id)
     }
 }
 
-private struct LiveStrip: View {
+/// Reorders while a tile is dragged over another, so the grid makes room as the pointer moves.
+private struct TileDrop: DropDelegate {
+    let target: NowTile
+    @Binding var dragging: NowTile?
+    let prefs: NowPrefs
+    let enabled: Bool
+
+    func validateDrop(info: DropInfo) -> Bool { enabled && dragging != nil }
+
+    func dropEntered(info: DropInfo) {
+        guard enabled, let d = dragging, d != target else { return }
+        MainActor.assumeIsolated { prefs.move(d, before: target) }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
+    }
+}
+
+// MARK: Header
+
+private struct NowHeader: View {
     @Environment(LiveModel.self) private var live
+    @Binding var editing: Bool
 
     var body: some View {
         HStack(spacing: 10) {
-            Circle().fill(live.isPaused ? Theme.textTertiary : Theme.green).frame(width: 8, height: 8)
+            Circle().fill(live.isPaused ? Theme.textTertiary : Theme.green).frame(width: 7, height: 7)
             Text(live.isPaused ? "Paused" : "Live").font(.headlineV).foregroundStyle(Theme.text)
-            Text("updates every \(live.isFast ? "second" : "5 seconds")").font(.calloutV).foregroundStyle(Theme.textTertiary)
+            Text(live.isPaused ? "numbers are frozen" : "updates every \(live.isFast ? "second" : "5 seconds")")
+                .font(.calloutV).foregroundStyle(Theme.textTertiary)
+            if let t = NowFacts.thermal() {
+                Label(t.label, systemImage: "thermometer.medium")
+                    .font(.captionStrongV)
+                    .foregroundStyle(t.severe ? Theme.red : Theme.orange)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background((t.severe ? Theme.red : Theme.orange).opacity(0.12), in: Capsule())
+                    .help(t.detail)
+            }
             Spacer()
             if let s = live.snapshot {
-                Text("Uptime \(Fmt.duration(s.uptime))").font(.calloutV).foregroundStyle(Theme.textSecondary)
+                Text("Up \(Fmt.duration(s.uptime))").font(.calloutV).foregroundStyle(Theme.textTertiary).monospacedDigit()
             }
-            Button(live.isPaused ? "Resume" : "Pause") { live.isPaused.toggle() }
-                .keyboardShortcut(.space, modifiers: .option)
+            Button(editing ? "Done" : "Edit") { editing.toggle() }
+                .keyboardShortcut(editing ? .defaultAction : nil)
+                .help(editing ? "Finish editing" : "Hide or reorder tiles")
+            Button {
+                live.isPaused.toggle()
+            } label: {
+                Label(live.isPaused ? "Resume" : "Pause", systemImage: live.isPaused ? "play.fill" : "pause.fill")
+            }
+            .keyboardShortcut(.space, modifiers: .option)
+            .help(live.isPaused ? "Resume (⌥Space)" : "Pause (⌥Space)")
         }
+        .controlSize(.regular)
         .padding(.horizontal, 4)
     }
 }
 
-struct MetricTile: View {
+// MARK: Vitals
+
+/// The four numbers people check most, side by side in one quiet panel.
+private struct VitalsStrip: View {
+    @Environment(LiveModel.self) private var live
+    let snapshot: Snapshot
+    let open: (NowMetric) -> Void
+
+    var body: some View {
+        let s = snapshot
+        HStack(spacing: 0) {
+            VitalCell(metric: .cpu, title: "CPU", symbol: "cpu", color: Theme.Metric.cpu,
+                      value: (Fmt.percent(s.cpu.total).dropLast().description, "%"),
+                      detail: "\(Fmt.percent(s.cpu.user)) user, \(Fmt.percent(s.cpu.system)) system",
+                      bars: live.cpu.elements, top: 1, format: Fmt.percent, open: open)
+            divider
+            VitalCell(metric: .memory, title: "Memory", symbol: "memorychip", color: Theme.Metric.memory,
+                      value: splitUnit(Fmt.bytes(s.memory.used)),
+                      detail: "of \(Fmt.bytes(s.memory.total))" + (s.memory.swapUsed > 0 ? ", \(Fmt.bytes(s.memory.swapUsed)) swap" : ""),
+                      badge: AnyView(PressureLabel(pressure: s.memory.pressure)),
+                      bars: live.memory.elements, top: 1, format: Fmt.percent, label: "In use", open: open)
+            divider
+            VitalCell(metric: .network, title: "Network", symbol: "arrow.down.circle", color: Theme.Metric.network,
+                      value: splitUnit(Fmt.rate(s.network.receivedBytesPerSecond)),
+                      detail: "\(Fmt.rate(s.network.sentBytesPerSecond)) up",
+                      bars: live.networkIn.elements, top: nil, format: Fmt.rate, label: "Download", open: open)
+            divider
+            powerCell(s)
+        }
+        .padding(.vertical, 4)
+        .background(Theme.window, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.separator))
+    }
+
+    @ViewBuilder
+    private func powerCell(_ s: Snapshot) -> some View {
+        if let b = s.battery {
+            let state = b.isCharging ? "Charging" : b.onBattery ? (b.timeRemaining.map { "\(Fmt.duration($0)) left" } ?? "On battery") : "On power adapter"
+            VitalCell(metric: .power, title: "Battery", symbol: b.isCharging ? "battery.100percent.bolt" : "battery.75percent", color: Theme.Metric.battery,
+                      value: (String(Int((b.charge * 100).rounded())), "%"),
+                      detail: state + (b.onBattery ? b.watts.map { ", \(Fmt.watts($0))" } ?? "" : ""),
+                      bars: live.power.elements, top: nil, format: Fmt.watts, label: "Power", open: open)
+        } else {
+            VitalCell(metric: .power, title: "Power", symbol: "bolt", color: Theme.Metric.battery,
+                      value: splitUnit(Fmt.watts(live.power.last ?? 0)),
+                      detail: "used by apps",
+                      bars: live.power.elements, top: nil, format: Fmt.watts, label: "Power", open: open)
+        }
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Theme.separator).frame(width: 1).padding(.vertical, 14)
+    }
+}
+
+private struct VitalCell: View {
+    @Environment(LiveModel.self) private var live
+    let metric: NowMetric
     let title: String
     let symbol: String
     let color: Color
-    let context: String
-    let value: String
-    let unit: String
-    var badge: (String, BadgeTone)? = nil
-    let stats: [(String, String)]
-    let history: [Double]?
-    let top: (AppSample, String)?
+    let value: (String, String)
+    let detail: String
+    var badge: AnyView? = nil
+    let bars: [Double]
+    let top: Double?
+    let format: (Double) -> String
+    var label = "Value"
+    let open: (NowMetric) -> Void
     @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                IconTile(systemName: symbol, color: color)
-                Text(title).font(.headlineV).foregroundStyle(Theme.text)
-                Spacer()
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(color)
+                Text(title).font(.calloutV).foregroundStyle(Theme.textSecondary)
+                Spacer(minLength: 4)
+                if let badge { badge }
             }
-            VStack(alignment: .leading, spacing: 0) {
-                Text(context).font(.captionV).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(value).font(.numericXL).foregroundStyle(Theme.text)
-                        .contentTransition(.numericText())
-                        .motion(Motion.value, value: value)
-                    Text(unit).font(.headlineV).foregroundStyle(Theme.textTertiary)
-                    Spacer()
-                    if let badge { Badge(badge.0, tone: badge.1) }
-                }
-            }
-            HStack(alignment: .top, spacing: 8) {
-                ForEach(Array(stats.enumerated()), id: \.offset) { _, st in
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(st.0).font(.captionV).foregroundStyle(Theme.textTertiary)
-                        Text(st.1).font(.numeric).foregroundStyle(Theme.text).lineLimit(1)
-                            .contentTransition(.numericText())
-                            .motion(Motion.value, value: st.1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            if let history {
-                BarHistory(values: history, color: color)
-                    .frame(height: 40)
-                    .padding(6)
-                    .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-            if let top {
-                HStack(spacing: 6) {
-                    Text("Top").font(.captionV).foregroundStyle(Theme.textTertiary)
-                    AppIconView(bundleURL: top.0.bundleURL, name: top.0.name, size: 14)
-                    Text(top.0.name).font(.calloutV).foregroundStyle(Theme.text).lineLimit(1)
-                    Spacer()
-                    Text(top.1).font(.numeric).foregroundStyle(Theme.textSecondary)
-                }
-            }
-            Spacer(minLength: 0)
+            BigNumber(value: value.0, unit: value.1)
+            Text(detail).font(.calloutV).foregroundStyle(Theme.textTertiary).lineLimit(1).monospacedDigit()
+            LiveBars(values: bars, color: color, tick: live.tick, top: top, interval: live.isFast ? 1 : 5, format: format, label: label)
+                .frame(height: 30)
+                .padding(.top, 6)
         }
-        .padding(.horizontal, 16).padding(.vertical, 14)
-        .frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
-        .background(Theme.window, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(hovering ? Theme.textTertiary.opacity(0.35) : Theme.separator))
-        .shadow(color: .black.opacity(hovering ? 0.06 : 0), radius: 10, y: 4)
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(hovering ? Theme.selected.opacity(0.45) : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(4)
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .motion(Motion.quick, value: hovering)
-    }
-}
-
-// MARK: Panels
-
-private struct Panel<Content: View>: View {
-    let title: String
-    let symbol: String
-    let color: Color
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                IconTile(systemName: symbol, color: color)
-                Text(title).font(.headlineV).foregroundStyle(Theme.text)
-            }
-            content
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Theme.window, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.separator))
-    }
-}
-
-private struct DonutLegendPanel: View {
-    let title: String
-    let symbol: String
-    let color: Color
-    let center: String
-    let caption: String
-    let rows: [(String, Double, String)]
-
-    var body: some View {
-        Panel(title: title, symbol: symbol, color: color) {
-            HStack(spacing: 20) {
-                let opacities = [1.0, 0.72, 0.5, 0.32]
-                let slices = rows.enumerated().map { i, r in
-                    DonutSlice(id: r.0, value: r.1, color: i < rows.count - 1 ? color.opacity(opacities[min(i, 3)]) : Theme.raised)
-                }
-                ZStack {
-                    Donut(slices: slices)
-                    VStack(spacing: 0) {
-                        Text(center).font(.numericL).foregroundStyle(Theme.text)
-                        Text(caption).font(.captionV).foregroundStyle(Theme.textTertiary)
-                    }
-                }
-                .frame(width: 120, height: 120)
-                VStack(spacing: 7) {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
-                        HStack(spacing: 8) {
-                            RoundedRectangle(cornerRadius: 2).fill(slices[i].color).frame(width: 8, height: 8)
-                            Text(r.0).font(.calloutV).foregroundStyle(Theme.text).lineLimit(1)
-                            Spacer()
-                            Text(r.2).font(.numeric).foregroundStyle(Theme.textSecondary)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct MemoryByTypePanel: View {
-    let memory: MemorySample
-    var body: some View {
-        let m = memory
-        DonutLegendPanel(title: "Memory by type", symbol: "memorychip", color: Theme.Metric.memory,
-                         center: Fmt.percent(m.total > 0 ? Double(m.used) / Double(m.total) : 0), caption: "in use",
-                         rows: [("App", Double(m.app), Fmt.bytes(m.app)), ("Wired", Double(m.wired), Fmt.bytes(m.wired)),
-                                ("Compressed", Double(m.compressed), Fmt.bytes(m.compressed)), ("Cached", Double(m.cached), Fmt.bytes(m.cached)),
-                                ("Free", Double(m.free), Fmt.bytes(m.free))])
-    }
-}
-
-private struct MemoryByAppPanel: View {
-    let apps: [AppSample]
-    let memory: MemorySample
-    var body: some View {
-        let top = Array(apps.prefix(4))
-        let rest = apps.dropFirst(4).reduce(UInt64(0)) { $0 + $1.memory }
-        let all = apps.reduce(UInt64(0)) { $0 + $1.memory }
-        DonutLegendPanel(title: "Memory by app", symbol: "square.grid.2x2", color: Theme.Metric.memory,
-                         center: Fmt.bytes(all), caption: "all apps",
-                         rows: top.map { ($0.name, Double($0.memory), Fmt.bytes($0.memory)) } + [("Other", Double(rest), Fmt.bytes(rest))])
-    }
-}
-
-private struct PowerByAppPanel: View {
-    let apps: [AppSample]
-    var body: some View {
-        let sorted = apps.sorted { $0.energyWatts > $1.energyWatts }
-        let top = Array(sorted.prefix(4))
-        let rest = sorted.dropFirst(4).reduce(0) { $0 + $1.energyWatts }
-        let all = sorted.reduce(0) { $0 + $1.energyWatts }
-        DonutLegendPanel(title: "Power by app", symbol: "bolt", color: Theme.Metric.battery,
-                         center: Fmt.watts(all), caption: "all apps",
-                         rows: top.map { ($0.name, $0.energyWatts, Fmt.watts($0.energyWatts)) } + [("Other", rest, Fmt.watts(rest))])
+        .onTapGesture { open(metric) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { open(metric) }
+        .help("Show \(title) details")
     }
 }
