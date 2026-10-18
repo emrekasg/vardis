@@ -6,6 +6,7 @@ import os
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let live = LiveModel()
     private let nav = Navigation()
+    private let models = AppModels()
     private var windowController: MainWindowController?
     private var statusBar: StatusBarController?
     private var aux: AuxWindows?
@@ -24,12 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state = Self.signposter.beginInterval("launch")
         Pref.registerDefaults()
         Appearance.apply(UserDefaults.standard.string(forKey: Pref.appearance) ?? "light")
-        let wc = MainWindowController(live: live, nav: nav)
+        let wc = MainWindowController(live: live, nav: nav, models: models)
         windowController = wc
         aux = AuxWindows(live: live)
         statusBar = StatusBarController(live: live) { [weak wc] screen in wc?.show(screen) }
         live.onTick = { [weak self] s in self?.statusBar?.update(s) }
         live.start()
+        models.start(live: live)
         hotKey = GlobalHotKey { [weak wc] in wc?.show() }
         NSApp.mainMenu = makeMenu()
         NotificationCenter.default.addObserver(forName: .vardisShowOnboarding, object: nil, queue: .main) { [weak self] _ in
@@ -89,5 +91,19 @@ enum LaunchTiming {
         let start = info.kp_proc.p_starttime
         let startSeconds = Double(start.tv_sec) + Double(start.tv_usec) / 1e6
         milliseconds = (Date().timeIntervalSince1970 - startSeconds) * 1000
+    }
+}
+
+/// Feature models, created at launch. Each starts its own background work off the main thread.
+@MainActor
+final class AppModels {
+    let claude = ClaudeModel()
+    let cleanup = CleanupModel()
+    let history = HistoryModel()
+
+    func start(live: LiveModel) {
+        claude.start()
+        cleanup.start()
+        history.start()
     }
 }

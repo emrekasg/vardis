@@ -8,7 +8,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     private let live: LiveModel
     private let nav: Navigation
 
-    init(live: LiveModel, nav: Navigation) {
+    init(live: LiveModel, nav: Navigation, models: AppModels) {
         self.live = live
         self.nav = nav
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
@@ -20,7 +20,8 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("VardisMain")
         window.minSize = NSSize(width: 1100, height: 720)
-        window.contentView = NSHostingView(rootView: MainView().environment(live).environment(nav))
+        window.contentView = NSHostingView(rootView: MainView().environment(live).environment(nav)
+            .environment(models.claude).environment(models.cleanup).environment(models.history))
         window.delegate = self
         // Fast sampling follows the screen too, so leaving Now for a static screen slows the loop.
         withObservationTracking { _ = nav.screen } onChange: { [weak self] in Task { @MainActor in self?.observeScreen() } }

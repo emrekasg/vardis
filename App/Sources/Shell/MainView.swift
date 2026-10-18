@@ -36,8 +36,16 @@ struct ScreenHost: View {
     var body: some View {
         switch screen {
         case .now: NowView()
+        case .today: TodayView()
         case .apps: AppsView()
-        default: PlannedScreen(screen: screen)
+        case .timeMachine: TimeMachineView()
+        case .diskCleanup: DiskCleanupView()
+        case .claudeLive: ClaudeLiveView()
+        case .claudeSessions: ClaudeSessionsView()
+        case .claudeUsage: ClaudeUsageView()
+        case .claudeAccounts: ClaudeAccountsView()
+        case .ports: PortsView()
+        case .docker: DockerView()
         }
     }
 }
