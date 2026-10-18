@@ -48,6 +48,12 @@ public struct ServerProcess: Sendable, Identifiable, Equatable {
     public var memory: UInt64
     /// Set when the process used no CPU for `idleAfter` and has no established connections.
     public var isIdle: Bool
+    /// Owner of the process (real uid).
+    public var uid: UInt32 = 0
+    /// Whose server this is: the user's, a container runtime's port forward, or macOS's own.
+    public var ownership: ServerOwnership = .yours
+    /// Since when it has been quiet (no CPU, no established connections), when `isIdle`. Kept in memory only.
+    public var idleSince: Date?
 }
 
 /// Finds listening sockets with libproc only (no lsof, no netstat).
@@ -111,7 +117,7 @@ public actor PortScanner {
         }
         lastTicks[key] = (ticks, nowNanos)
         var tracker = idle[key] ?? IdleTracker(since: now)
-        tracker.observe(cpuNanos: timebase.nanos(ticks), at: now)
+        tracker.observe(cpuNanos: timebase.nanos(ticks), busy: sockets.established > 0, at: now)
         idle[key] = tracker
 
         let path = Self.executablePath(pid)
@@ -119,14 +125,18 @@ public actor PortScanner {
         // Same naming as the Apps screen, so a binary called "2.1.302" reads as its tool.
         let name = AppGrouper.toolIdentity(name: rawName, path: path ?? "").name
         let cwd = Self.workingDirectory(pid)
-        let server = ServerProcess(
+        let isIdle = sockets.established == 0 && tracker.isIdle(at: now, after: idleAfter)
+        var server = ServerProcess(
             pid: pid, name: name, executablePath: path ?? "",
             workingDirectory: cwd, projectPath: cwd.flatMap(project(for:)),
             started: Date(timeIntervalSince1970: Double(bsd.pbi_start_tvsec) + Double(bsd.pbi_start_tvusec) / 1e6),
             ports: sockets.ports, establishedConnections: sockets.established,
             cpu: cpu, memory: gotUsage ? usage.ri_phys_footprint : 0,
-            isIdle: sockets.established == 0 && tracker.isIdle(at: now, after: idleAfter)
+            isIdle: isIdle
         )
+        server.uid = bsd.pbi_uid
+        server.ownership = ServerOwnership.classify(pid: pid, uid: bsd.pbi_uid, currentUID: uid, name: rawName, path: path ?? "")
+        server.idleSince = isIdle ? tracker.since : nil
         return (server, key)
     }
 
@@ -265,7 +275,7 @@ public actor PortScanner {
 
     /// True while `pid` is still the process that started at `started` (pids are reused).
     public static func isRunning(pid: Int32, started: Date) -> Bool {
-        guard let bsd = bsdInfo(pid) else { return false }
+        guard let bsd = bsdInfo(pid), bsd.pbi_status != UInt32(SZOMB) else { return false }
         let start = Double(bsd.pbi_start_tvsec) + Double(bsd.pbi_start_tvusec) / 1e6
         return abs(start - started.timeIntervalSince1970) < 0.001
     }
@@ -319,8 +329,10 @@ struct IdleTracker: Equatable {
         lastSeen = since
     }
 
-    mutating func observe(cpuNanos now: Double, at date: Date) {
+    /// `busy` (an established connection right now) counts as activity, like CPU.
+    mutating func observe(cpuNanos now: Double, busy: Bool = false, at date: Date) {
         defer { lastSeen = date; cpuNanos = now }
+        if busy { since = date }
         guard cpuNanos >= 0 else { return }
         let wall = max(1, date.timeIntervalSince(lastSeen)) * 1e9
         if now - cpuNanos > wall * Self.noiseFraction { since = date }
